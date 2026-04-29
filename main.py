@@ -8,6 +8,7 @@ import os
 import time
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 import mlflow
@@ -33,9 +34,15 @@ print(f"MLflow tracking enabled (SQLite): {mlflow_db}")
 
 # Set Azure OpenAI environment variables
 azure_key = os.getenv("AZURE_OPENAI_API_KEY")
-azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT_GPT5")
+_raw_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT_GPT5_MINI", "")
+# AzureOpenAI needs only the base URL (scheme + host)
+if _raw_endpoint:
+    _p = urlparse(_raw_endpoint)
+    azure_endpoint = f"{_p.scheme}://{_p.netloc}"
+else:
+    azure_endpoint = None
 azure_api_version = os.getenv(
-    "AZURE_OPENAI_API_VERSION_GPT5", "2024-12-01-preview"
+    "API_VERSION_GPT5_MINI", "2025-04-01-preview"
 )
 
 # Also set the generic env vars for the LLM client
@@ -334,7 +341,7 @@ if __name__ == "__main__":
     # ================================================
 
     # -- LLM --
-    MODEL = "gpt-5"  # Azure OpenAI deployment name for Q+A generation
+    MODEL = os.getenv("DEPLOYMENT_NAME_GPT5_MINI", "gpt-5")
 
     # -- Naming / paths --
     CORPUS_NAME = "DSL_corpus"  # Label used in output filenames and MLflow
@@ -364,70 +371,84 @@ if __name__ == "__main__":
 
     # -- Question types to generate --
     # Set enabled=False or remove a type to disable it.
+    # If set, overrides count for ALL enabled types (e.g. 1 for quick test)
+    COUNT_OVERRIDE = 1  # Set to None to use per-type counts
+
     QUESTION_TYPES = {
-        QuestionType.DIRECT_LOOKUP: QuestionConfig(  # Exact fact retrieval ("what is X?")
-            enabled=True, count=3, difficulty="easy"
+        QuestionType.DIRECT_LOOKUP: QuestionConfig(
+            enabled=True, count=3, difficulty="easy",
         ),
-        QuestionType.PARAPHRASE_LOOKUP: QuestionConfig(  # Same fact, rephrased question
-            enabled=True, count=3, difficulty="medium"
+        QuestionType.PARAPHRASE_LOOKUP: QuestionConfig(
+            enabled=True, count=3, difficulty="medium",
         ),
-        QuestionType.SPECIFIC_JARGON: QuestionConfig(  # Domain-specific terms and definitions
-            enabled=True, count=3, difficulty="medium"
+        QuestionType.SPECIFIC_JARGON: QuestionConfig(
+            enabled=True, count=3, difficulty="medium",
         ),
-        QuestionType.MULTI_HOP_WITHIN_CORPUS: QuestionConfig(  # Combines info from 2 sections in same doc
-            enabled=True, count=3, difficulty="hard"
+        QuestionType.MULTI_HOP_WITHIN_CORPUS: QuestionConfig(
+            enabled=True, count=3, difficulty="hard",
         ),
-        QuestionType.MULTI_HOP_BETWEEN_DOCUMENTS: QuestionConfig(  # Combines info across different docs
-            enabled=True, count=3, difficulty="hard"
+        QuestionType.MULTI_HOP_BETWEEN_DOCUMENTS: QuestionConfig(
+            enabled=True, count=3, difficulty="hard",
         ),
-        # QuestionType.CROSS_DOCUMENT_CONFLICT: QuestionConfig(  # Contradictions between docs
-        #     enabled=True, count=3, difficulty="hard"
+        # QuestionType.CROSS_DOCUMENT_CONFLICT: QuestionConfig(
+        #     enabled=True, count=3, difficulty="hard",
         # ),
-        QuestionType.TEMPORAL_QUESTIONS: QuestionConfig(  # Version/date-aware questions across docs
-            enabled=True, count=3, difficulty="medium"
+        QuestionType.TEMPORAL_QUESTIONS: QuestionConfig(
+            enabled=True, count=3, difficulty="medium",
         ),
-        QuestionType.NEEDLE_IN_HAYSTACK: QuestionConfig(  # Find a small detail in a long section
-            enabled=True, count=3, difficulty="hard"
+        QuestionType.NEEDLE_IN_HAYSTACK: QuestionConfig(
+            enabled=True, count=3, difficulty="hard",
         ),
-        QuestionType.LISTS_EXTRACTION: QuestionConfig(  # Extract items from bullet/numbered lists
-            enabled=True, count=3, difficulty="easy"
+        QuestionType.LISTS_EXTRACTION: QuestionConfig(
+            enabled=True, count=3, difficulty="easy",
         ),
-        QuestionType.HALLUCINATION_TEST: QuestionConfig(  # Q about topics NOT in the corpus
-            enabled=True, count=3, difficulty="medium"
+        QuestionType.HALLUCINATION_TEST: QuestionConfig(
+            enabled=True, count=3, difficulty="medium",
         ),
-        QuestionType.ADVERSARIAL_AGGRO: QuestionConfig(  # Aggressive/rude user tone
-            enabled=True, count=3, difficulty="hard"
+        QuestionType.ADVERSARIAL_AGGRO: QuestionConfig(
+            enabled=True, count=3, difficulty="hard",
         ),
-        QuestionType.PROMPT_INJECTION: QuestionConfig(  # Attempts to override system instructions
-            enabled=True, count=3, difficulty="hard"
+        QuestionType.PROMPT_INJECTION: QuestionConfig(
+            enabled=True, count=3, difficulty="hard",
         ),
-        QuestionType.PINPOINTING_QUOTING: QuestionConfig(  # "In which doc/section is X mentioned?"
-            enabled=True, count=3, difficulty="medium"
+        QuestionType.PINPOINTING_QUOTING: QuestionConfig(
+            enabled=True, count=3, difficulty="medium",
         ),
-        QuestionType.LONG_CONTEXT_SYNTHESIS: QuestionConfig(  # Counting/summarizing across many sections
-            enabled=True, count=3, difficulty="hard"
+        QuestionType.LONG_CONTEXT_SYNTHESIS: QuestionConfig(
+            enabled=True, count=3, difficulty="hard",
         ),
-        QuestionType.AMBIGUOUS_QUESTIONS: QuestionConfig(  # Vague questions needing clarification
-            enabled=True, count=3, difficulty="medium"
+        QuestionType.AMBIGUOUS_QUESTIONS: QuestionConfig(
+            enabled=True, count=3, difficulty="medium",
         ),
-        # QuestionType.TOOL_CALL_CHECK: QuestionConfig(  # Tests tool/function calling ability
-        #     enabled=True, count=3, difficulty="hard"
+        # QuestionType.TOOL_CALL_CHECK: QuestionConfig(
+        #     enabled=True, count=3, difficulty="hard",
         # ),
-        # QuestionType.TABLES_EXTRACTION: QuestionConfig(  # Extract data from tables
-        #     enabled=True, count=3, difficulty="medium"
+        # QuestionType.TABLES_EXTRACTION: QuestionConfig(
+        #     enabled=True, count=3, difficulty="medium",
         # ),
-        # QuestionType.INFOGRAPHIC_EXTRACTION: QuestionConfig(  # Extract data from images
-        #     enabled=True, count=3, difficulty="medium"
+        # QuestionType.INFOGRAPHIC_EXTRACTION: QuestionConfig(
+        #     enabled=True, count=3, difficulty="medium",
         # ),
-        QuestionType.MULTI_TURN_FOLLOWUP: QuestionConfig(  # Two-turn conversation with follow-up
-            enabled=True, count=3, difficulty="medium"
+        QuestionType.MULTI_TURN_FOLLOWUP: QuestionConfig(
+            enabled=True, count=3, difficulty="medium",
         ),
-        # QuestionType.ACCESS_CONTROL: QuestionConfig(  # Tests role-based access boundaries
-        #     enabled=True, count=3, difficulty="hard"
+        # QuestionType.ACCESS_CONTROL: QuestionConfig(
+        #     enabled=True, count=3, difficulty="hard",
         # ),
     }
 
     # ================================================
+
+    # Apply count override if set
+    if COUNT_OVERRIDE is not None:
+        QUESTION_TYPES = {
+            qt: QuestionConfig(
+                enabled=cfg.enabled,
+                count=COUNT_OVERRIDE,
+                difficulty=cfg.difficulty,
+            )
+            for qt, cfg in QUESTION_TYPES.items()
+        }
 
     config = build_config(
         model=MODEL,
