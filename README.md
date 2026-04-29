@@ -173,6 +173,18 @@ Test sets saved to `data/test_sets/{corpus_name}/{corpus_name}_{timestamp}.json`
 - Per-question metadata (source docs, pages, match ratios, quality scores)
 - MLflow experiment tracking (SQLite: `mlflow.db`)
 
+## Test Set Viewer
+
+A browser-based UI for reviewing generated test sets. Load a JSON output file to browse questions in a filterable table with search, type/difficulty filters, and expandable cells for long content.
+
+```bash
+cd test-set-viewer
+npm install
+npm start
+```
+
+This compiles the TypeScript and launches a local server (default `http://localhost:3000`). Use the file picker to load a test set JSON from `data/test_sets/`.
+
 ## License
 
 MIT License — see LICENSE file for details.
