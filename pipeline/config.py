@@ -106,6 +106,9 @@ class TestSetConfig:
     quality: QualityConfig = field(default_factory=QualityConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
+    # Feature flags
+    difficulty_enabled: bool = False
+
     # General settings
     random_seed: int = 42
 

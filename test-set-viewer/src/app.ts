@@ -21,7 +21,7 @@ interface Question {
   golden_answer: string;
   golden_context?: string;
   source_documents: string[];
-  difficulty: string;
+  difficulty?: string | null;
   generation_prompt?: string;
   metadata: QuestionMetadata;
 }
@@ -320,7 +320,7 @@ function getFilteredQuestions(): Question[] {
 
   return testSetData.questions.filter((q) => {
     if (typeVal !== "all" && q.type !== typeVal) return false;
-    if (diffVal !== "all" && q.difficulty !== diffVal) return false;
+    if (diffVal !== "all" && (q.difficulty || "N/A") !== diffVal) return false;
     if (searchVal) {
       const haystack =
         `${q.question} ${q.golden_answer} ${q.golden_context || ""} ${q.id}`.toLowerCase();
@@ -410,7 +410,7 @@ function renderRow(q: Question, index: number): string {
   return `<tr>
     <td><span class="row-num">${index + 1}</span></td>
     <td><span class="badge badge-type">${formatTypeName(q.type)}</span></td>
-    <td><span class="badge badge-${q.difficulty}">${q.difficulty}</span></td>
+    <td>${q.difficulty ? `<span class="badge badge-${q.difficulty}">${q.difficulty}</span>` : '<span style="color:var(--text-muted)">-</span>'}</td>
     <td class="cell-expandable">
       <div class="cell-text" data-title="Question" data-full="${attr(q.question)}">${escapeHtml(q.question)}</div>
     </td>

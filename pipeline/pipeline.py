@@ -159,12 +159,17 @@ class Pipeline:
                         s: doc_metadata.get(s, {})
                         for s in candidate.source_documents
                     }
+                diff = (
+                    qcfg.difficulty
+                    if self.config.difficulty_enabled
+                    else None
+                )
                 q_data = self.qa_gen.generate(
                     passage=candidate.passage,
                     source_documents=candidate.source_documents,
                     chapter=candidate.chapter,
                     question_type=qtype,
-                    difficulty=qcfg.difficulty,
+                    difficulty=diff,
                     doc_metadata=candidate_meta,
                 )
                 metrics["llm_calls"] += 1
@@ -202,16 +207,32 @@ class Pipeline:
                         continue
 
                 # Phase 4b: Quality scoring (LLM-as-judge)
-                quality = self.quality_scorer.score(
-                    question=q_data["question"],
-                    answer=q_data["answer"],
-                    passage=candidate.passage,
-                    question_type=qtype,
-                    difficulty=qcfg.difficulty,
-                )
-                metrics["llm_calls"] += (
-                    1 if self.config.quality.enabled else 0
-                )
+                # Skip for adversarial types where naturalness
+                # and difficulty dimensions are misaligned
+                _SKIP_QUALITY = {
+                    QuestionType.PROMPT_INJECTION,
+                    QuestionType.ADVERSARIAL_AGGRO,
+                }
+                if qtype in _SKIP_QUALITY:
+                    quality = {
+                        "quality_scores": {},
+                        "composite_score": 0.0,
+                        "quality_passed": True,
+                        "quality_reason": "skipped for "
+                        "adversarial type",
+                    }
+                else:
+                    quality = self.quality_scorer.score(
+                        question=q_data["question"],
+                        answer=q_data["answer"],
+                        passage=candidate.passage,
+                        question_type=qtype,
+                        difficulty=diff,
+                    )
+                    metrics["llm_calls"] += (
+                        1 if self.config.quality.enabled
+                        else 0
+                    )
 
                 if not quality["quality_passed"]:
                     print(
@@ -241,7 +262,7 @@ class Pipeline:
                     "source_documents": (
                         candidate.source_documents
                     ),
-                    "difficulty": qcfg.difficulty,
+                    "difficulty": diff,
                     "generation_prompt": instruction,
                     "hallucination_detected": False,
                     "context_repaired": False,
@@ -373,36 +394,43 @@ class Pipeline:
         for fpath in sorted(path.rglob("*")):
             if not fpath.is_file():
                 continue
+            # Relative path from input dir (e.g. HR/CV/file.docx)
+            rel = str(fpath.relative_to(path)).replace(
+                "\\", "/"
+            )
+            doc = None
             try:
                 if fpath.suffix.lower() == ".pdf":
-                    documents.append(parse_pdf(str(fpath)))
-                elif fpath.suffix.lower() in (".txt", ".md"):
-                    documents.append(
-                        parse_text_file(str(fpath))
-                    )
+                    doc = parse_pdf(str(fpath))
+                elif fpath.suffix.lower() in (
+                    ".txt", ".md",
+                ):
+                    doc = parse_text_file(str(fpath))
                 elif fpath.suffix.lower() == ".docx":
-                    documents.append(
-                        parse_docx(str(fpath))
-                    )
+                    doc = parse_docx(str(fpath))
                 elif fpath.suffix.lower() in (
                     ".xlsx", ".xls",
                 ):
-                    documents.append(
-                        parse_excel(str(fpath))
-                    )
+                    doc = parse_excel(str(fpath))
                 elif fpath.suffix.lower() == ".json":
-                    # JSON documents: load as text
                     text = fpath.read_text(
-                        encoding="utf-8", errors="ignore"
+                        encoding="utf-8",
+                        errors="ignore",
                     )
-                    documents.append(Document(
-                        filename=fpath.name,
+                    doc = Document(
+                        filename=rel,
                         raw_text=text,
                         page_count=1,
                         doc_type="json",
-                    ))
+                    )
             except Exception as e:
                 print(f"  Error loading {fpath}: {e}")
+
+            if doc is not None:
+                # Use relative path as filename for
+                # clearer source_documents references
+                doc.filename = rel
+                documents.append(doc)
 
         return documents
 
@@ -465,7 +493,10 @@ class Pipeline:
         multiple topic-specific keywords from the question.
         """
         import re as _re
-        # Extract topic-specific nouns (>= 6 chars, skip stopwords)
+        # Extract topic-specific nouns (>= 8 chars, skip stopwords)
+        # Use longer words to avoid generic domain terms that
+        # appear everywhere — we only want to reject when the
+        # SPECIFIC detail (not just the topic) exists elsewhere.
         q_norm = _re.sub(r"[^\w\s]", " ", question.lower())
         stopwords = {
             "welke", "welk", "wanneer", "waarom", "hoeveel",
@@ -477,7 +508,7 @@ class Pipeline:
         }
         keywords = [
             w for w in q_norm.split()
-            if len(w) >= 6 and w not in stopwords
+            if len(w) >= 8 and w not in stopwords
         ]
         if len(keywords) < 2:
             return False
@@ -579,7 +610,7 @@ class Pipeline:
 
         # Difficulty distribution
         diff_counter = Counter(
-            q.get("difficulty", "unknown")
+            q.get("difficulty") or "N/A"
             for q in questions
         )
 
@@ -677,7 +708,7 @@ class Pipeline:
         date_str = datetime.now().strftime(
             "%d_%m_%y_T%H_%M"
         )
-        filename = f"v2_{name}_{date_str}.json"
+        filename = f"{name}_{date_str}.json"
 
         corpus_dir = os.path.join(
             self.config.output_path, name

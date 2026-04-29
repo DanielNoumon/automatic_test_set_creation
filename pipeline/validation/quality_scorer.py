@@ -74,7 +74,7 @@ def _build_judge_prompt(
 
 PASSAGE (used to generate the Q&A):
 \"\"\"
-{passage[:2000]}
+{passage}
 \"\"\"
 
 QUESTION TYPE: {question_type}
@@ -178,7 +178,7 @@ class QualityScorer:
         answer: str,
         passage: str,
         question_type: QuestionType,
-        difficulty: str,
+        difficulty: str = None,
     ) -> Dict[str, Any]:
         """Score a Q+A pair using the LLM judge.
 
@@ -193,13 +193,21 @@ class QualityScorer:
                 "quality_reason": "scoring disabled",
             }
 
+        # Drop difficulty_alignment when difficulty is disabled
+        dims = self.config.dimensions
+        if not difficulty:
+            dims = tuple(
+                d for d in dims
+                if d != "difficulty_alignment"
+            )
+
         messages = _build_judge_prompt(
             question=question,
             answer=answer,
             passage=passage,
             question_type=question_type.value,
-            difficulty=difficulty,
-            dimensions=self.config.dimensions,
+            difficulty=difficulty or "N/A",
+            dimensions=dims,
         )
 
         try:

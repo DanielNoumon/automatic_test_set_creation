@@ -23,7 +23,7 @@ class QAGenerator:
         source_documents: list,
         chapter: str,
         question_type: QuestionType,
-        difficulty: str,
+        difficulty: str = None,
         doc_metadata: dict = None,
     ) -> Optional[Dict[str, str]]:
         """Generate a single Q+A pair from a passage.

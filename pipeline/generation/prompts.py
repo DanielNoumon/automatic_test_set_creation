@@ -130,12 +130,17 @@ TYPE_INSTRUCTIONS = {
     ),
     QuestionType.HALLUCINATION_TEST: (
         "Generate a HALLUCINATION TEST question. "
-        "CRITICAL: The question MUST ask about something that "
-        "is NOT mentioned, NOT covered, and NOT answerable "
-        "from the passage. The passage is shown ONLY so you "
-        "know the domain — invent a plausible-sounding "
-        "question about a DIFFERENT topic, policy, person, "
-        "or detail that does NOT appear anywhere in the text. "
+        "CRITICAL: The question MUST sound plausible and "
+        "in-domain — like something an employee would really "
+        "ask — but the answer must NOT be present in the "
+        "passage or any company document. "
+        "Read the passage to understand the domain, then ask "
+        "about a SPECIFIC detail that is NOT mentioned: "
+        "e.g. a specific budget amount, a named person, a "
+        "particular date, a policy clause, or a process step "
+        "that does NOT appear in the text. The question should "
+        "feel natural and tricky — someone might expect the "
+        "answer to be there, but it is not. "
         "The answer MUST explicitly state that this "
         "information is not available in the documents. "
         "Do NOT ask about anything that IS in the passage."
@@ -299,7 +304,7 @@ def build_qa_prompt(
     source_documents: list,
     chapter: str,
     question_type: QuestionType,
-    difficulty: str,
+    difficulty: str = None,
     doc_metadata: dict = None,
 ) -> list:
     """Build the messages for Q+A generation from a passage."""
@@ -353,7 +358,7 @@ PASSAGE (from chapter: {chapter}):
 SOURCE DOCUMENTS: {', '.join(source_documents)}
 CHAPTER / SECTION: {chapter}{meta_block}
 QUESTION TYPE: {type_hint}
-DIFFICULTY: {difficulty}
+{"DIFFICULTY: " + difficulty if difficulty else ""}
 
 RULES:
 - The question must be answerable ENTIRELY from the passage \
