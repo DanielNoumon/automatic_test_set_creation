@@ -1,5 +1,5 @@
 """
-Pipeline orchestrator: Parse → Index → Select → Generate → Validate.
+Pipeline orchestrator: Parse → Index → Select → Generate → Validate → Score.
 
 Ties all modules together into a single run() call.
 """
@@ -15,6 +15,8 @@ from .config import TestSetConfig, QuestionType
 from .parsing.document import Document
 from .parsing.pdf_parser import parse_pdf
 from .parsing.text_parser import parse_text_file
+from .parsing.docx_parser import parse_docx
+from .parsing.excel_parser import parse_excel
 from .indexing.search_index import SearchIndex
 from .indexing.entity_extractor import (
     SectionEntities, extract_entities,
@@ -27,6 +29,7 @@ from .generation.prompts import (
     EXPECTED_BEHAVIORS, TYPE_INSTRUCTIONS,
 )
 from .validation.validator import Validator
+from .validation.quality_scorer import QualityScorer
 
 
 class Pipeline:
@@ -37,7 +40,7 @@ class Pipeline:
         self.rng = random.Random(config.random_seed)
         self.validator = Validator(config.validation)
 
-        # LLM client — only used for Q+A generation
+        # LLM client — used for Q+A generation and quality scoring
         self.llm = LLMClient(
             api_key=config.llm.api_key,
             model=config.llm.model,
@@ -45,6 +48,9 @@ class Pipeline:
             azure_api_version=config.llm.azure_api_version,
         )
         self.qa_gen = QAGenerator(self.llm)
+        self.quality_scorer = QualityScorer(
+            self.llm, config.quality,
+        )
 
     def run(self) -> Tuple[str, Dict[str, Any]]:
         """Run the full pipeline. Returns (output_path, test_set)."""
@@ -195,6 +201,27 @@ class Pipeline:
                         )
                         continue
 
+                # Phase 4b: Quality scoring (LLM-as-judge)
+                quality = self.quality_scorer.score(
+                    question=q_data["question"],
+                    answer=q_data["answer"],
+                    passage=candidate.passage,
+                    question_type=qtype,
+                    difficulty=qcfg.difficulty,
+                )
+                metrics["llm_calls"] += (
+                    1 if self.config.quality.enabled else 0
+                )
+
+                if not quality["quality_passed"]:
+                    print(
+                        f"      REJECTED (quality): "
+                        f"score={quality['composite_score']}"
+                        f"/{self.config.quality.min_score} "
+                        f"— {quality['quality_reason']}"
+                    )
+                    continue
+
                 # Build question record
                 idx = len(all_questions) + len(type_questions)
                 instruction = TYPE_INSTRUCTIONS.get(
@@ -211,7 +238,9 @@ class Pipeline:
                     ),
                     "golden_answer": q_data["answer"],
                     "golden_context": candidate.passage,
-                    "source_documents": candidate.source_documents,
+                    "source_documents": (
+                        candidate.source_documents
+                    ),
                     "difficulty": qcfg.difficulty,
                     "generation_prompt": instruction,
                     "hallucination_detected": False,
@@ -224,17 +253,34 @@ class Pipeline:
                         "subchapters": candidate.subchapters,
                         "start_pages": {
                             s: candidate.page_start
-                            for s in candidate.source_documents
+                            for s in (
+                                candidate.source_documents
+                            )
                         },
                         "end_pages": {
                             s: candidate.page_end
-                            for s in candidate.source_documents
+                            for s in (
+                                candidate.source_documents
+                            )
                         },
-                        "context_match_ratio": validation.get(
-                            "match_ratio", 0
+                        "context_match_ratio": (
+                            validation.get(
+                                "match_ratio", 0
+                            )
                         ),
-                        "answer_grounded": validation.get(
-                            "answer_grounded", False
+                        "answer_grounded": (
+                            validation.get(
+                                "answer_grounded", False
+                            )
+                        ),
+                        "quality_scores": (
+                            quality["quality_scores"]
+                        ),
+                        "composite_score": (
+                            quality["composite_score"]
+                        ),
+                        "quality_reason": (
+                            quality["quality_reason"]
                         ),
                     },
                 }
@@ -254,11 +300,17 @@ class Pipeline:
                     candidate.source_documents[0],
                     q_data["question"],
                 )
+                score_str = (
+                    f" quality={quality['composite_score']}"
+                    if self.config.quality.enabled
+                    else ""
+                )
                 print(
                     f"      PASSED: "
                     f"'{q_data['question'][:60]}' "
                     f"(match="
-                    f"{validation.get('match_ratio', 0):.0%})"
+                    f"{validation.get('match_ratio', 0):.0%}"
+                    f"{score_str})"
                 )
 
             all_questions.extend(type_questions)
@@ -327,6 +379,16 @@ class Pipeline:
                 elif fpath.suffix.lower() in (".txt", ".md"):
                     documents.append(
                         parse_text_file(str(fpath))
+                    )
+                elif fpath.suffix.lower() == ".docx":
+                    documents.append(
+                        parse_docx(str(fpath))
+                    )
+                elif fpath.suffix.lower() in (
+                    ".xlsx", ".xls",
+                ):
+                    documents.append(
+                        parse_excel(str(fpath))
                     )
                 elif fpath.suffix.lower() == ".json":
                     # JSON documents: load as text
@@ -487,6 +549,25 @@ class Pipeline:
             )
         )
 
+        # Quality scores from LLM-as-judge
+        composite_scores = [
+            q.get("metadata", {}).get(
+                "composite_score", 0
+            )
+            for q in questions
+            if q.get("metadata", {}).get(
+                "composite_score", 0
+            ) > 0
+        ]
+        # Per-dimension averages
+        dim_totals: Dict[str, list] = {}
+        for q in questions:
+            qs = q.get("metadata", {}).get(
+                "quality_scores", {}
+            )
+            for dim, val in qs.items():
+                dim_totals.setdefault(dim, []).append(val)
+
         # Source document distribution
         src_counter: Counter = Counter()
         multi_src = 0
@@ -550,6 +631,19 @@ class Pipeline:
                         q["question"] for q in questions
                     ))
                 ),
+                "avg_composite_score": round(
+                    sum(composite_scores)
+                    / max(len(composite_scores), 1), 2
+                ) if composite_scores else None,
+                "min_composite_score": round(
+                    min(composite_scores), 2
+                ) if composite_scores else None,
+                "per_dimension_avg": {
+                    dim: round(
+                        sum(vals) / len(vals), 2
+                    )
+                    for dim, vals in dim_totals.items()
+                },
             },
             "context_stats": {
                 "min_chars": min(ctx_lens) if ctx_lens else 0,
