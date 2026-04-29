@@ -411,9 +411,9 @@ if __name__ == "__main__":
         QuestionType.PROMPT_INJECTION: QuestionConfig(
             enabled=True, count=3, difficulty="hard",
         ),
-        QuestionType.PINPOINTING_QUOTING: QuestionConfig(
-            enabled=True, count=3, difficulty="medium",
-        ),
+        # QuestionType.PINPOINTING_QUOTING: QuestionConfig(
+        #     enabled=True, count=3, difficulty="medium",
+        # ),
         QuestionType.LONG_CONTEXT_SYNTHESIS: QuestionConfig(
             enabled=True, count=3, difficulty="hard",
         ),

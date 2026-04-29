@@ -74,7 +74,7 @@ def _build_judge_prompt(
 
 PASSAGE (used to generate the Q&A):
 \"\"\"
-{passage[:2000]}
+{passage}
 \"\"\"
 
 QUESTION TYPE: {question_type}

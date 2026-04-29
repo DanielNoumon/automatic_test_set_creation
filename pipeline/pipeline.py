@@ -202,16 +202,32 @@ class Pipeline:
                         continue
 
                 # Phase 4b: Quality scoring (LLM-as-judge)
-                quality = self.quality_scorer.score(
-                    question=q_data["question"],
-                    answer=q_data["answer"],
-                    passage=candidate.passage,
-                    question_type=qtype,
-                    difficulty=qcfg.difficulty,
-                )
-                metrics["llm_calls"] += (
-                    1 if self.config.quality.enabled else 0
-                )
+                # Skip for adversarial types where naturalness
+                # and difficulty dimensions are misaligned
+                _SKIP_QUALITY = {
+                    QuestionType.PROMPT_INJECTION,
+                    QuestionType.ADVERSARIAL_AGGRO,
+                }
+                if qtype in _SKIP_QUALITY:
+                    quality = {
+                        "quality_scores": {},
+                        "composite_score": 0.0,
+                        "quality_passed": True,
+                        "quality_reason": "skipped for "
+                        "adversarial type",
+                    }
+                else:
+                    quality = self.quality_scorer.score(
+                        question=q_data["question"],
+                        answer=q_data["answer"],
+                        passage=candidate.passage,
+                        question_type=qtype,
+                        difficulty=qcfg.difficulty,
+                    )
+                    metrics["llm_calls"] += (
+                        1 if self.config.quality.enabled
+                        else 0
+                    )
 
                 if not quality["quality_passed"]:
                     print(
@@ -472,7 +488,10 @@ class Pipeline:
         multiple topic-specific keywords from the question.
         """
         import re as _re
-        # Extract topic-specific nouns (>= 6 chars, skip stopwords)
+        # Extract topic-specific nouns (>= 8 chars, skip stopwords)
+        # Use longer words to avoid generic domain terms that
+        # appear everywhere — we only want to reject when the
+        # SPECIFIC detail (not just the topic) exists elsewhere.
         q_norm = _re.sub(r"[^\w\s]", " ", question.lower())
         stopwords = {
             "welke", "welk", "wanneer", "waarom", "hoeveel",
@@ -484,7 +503,7 @@ class Pipeline:
         }
         keywords = [
             w for w in q_norm.split()
-            if len(w) >= 6 and w not in stopwords
+            if len(w) >= 8 and w not in stopwords
         ]
         if len(keywords) < 2:
             return False
