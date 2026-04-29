@@ -64,6 +64,19 @@ class ValidationConfig:
 
 
 @dataclass
+class QualityConfig:
+    """Configuration for LLM-as-judge quality scoring."""
+    enabled: bool = True
+    min_score: float = 3.5          # reject Q+A pairs below this composite score (1-5)
+    dimensions: tuple = (
+        "self_containedness",       # understandable without source context?
+        "answer_accuracy",          # answer correctly addresses the question given passage?
+        "naturalness",              # sounds like a real user question?
+        "difficulty_alignment",     # matches the requested difficulty level?
+    )
+
+
+@dataclass
 class PipelineConfig:
     """Configuration for pipeline-level behaviour."""
     hallucination_bm25_threshold: float = 3.0
@@ -90,6 +103,7 @@ class TestSetConfig:
     # Sub-configs
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
     # General settings

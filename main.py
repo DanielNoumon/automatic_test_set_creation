@@ -14,7 +14,8 @@ import mlflow
 
 from pipeline.config import (
     TestSetConfig, LLMConfig, QuestionType, QuestionConfig,
-    SelectionConfig, ValidationConfig, PipelineConfig,
+    SelectionConfig, ValidationConfig, QualityConfig,
+    PipelineConfig,
 )
 from pipeline.pipeline import Pipeline
 
@@ -62,6 +63,9 @@ def build_config(
     min_keyword_ratio: float = 0.25,
     min_context_match: float = 0.3,
     min_context_length: int = 30,
+    # Quality scoring (LLM-as-judge)
+    quality_scoring_enabled: bool = True,
+    quality_min_score: float = 3.5,
     # Pipeline
     hallucination_bm25_threshold: float = 3.0,
     hallucination_overlap_threshold: float = 0.5,
@@ -99,6 +103,10 @@ def build_config(
             min_keyword_ratio=min_keyword_ratio,
             min_context_match=min_context_match,
             min_context_length=min_context_length,
+        ),
+        quality=QualityConfig(
+            enabled=quality_scoring_enabled,
+            min_score=quality_min_score,
         ),
         pipeline=PipelineConfig(
             hallucination_bm25_threshold=hallucination_bm25_threshold,
@@ -221,6 +229,29 @@ def run_pipeline(config: TestSetConfig):
                 round(grounded / actual_count, 3),
             )
 
+        # --- LLM-as-judge quality scores ---
+        composite_scores = [
+            q.get("metadata", {}).get(
+                "composite_score", 0
+            )
+            for q in questions
+            if q.get("metadata", {}).get(
+                "composite_score", 0
+            ) > 0
+        ]
+        if composite_scores:
+            mlflow.log_metric(
+                "avg_quality_score",
+                round(
+                    sum(composite_scores)
+                    / len(composite_scores), 2
+                ),
+            )
+            mlflow.log_metric(
+                "min_quality_score",
+                round(min(composite_scores), 2),
+            )
+
         # --- Artifact ---
         mlflow.log_artifact(output_file)
 
@@ -321,6 +352,10 @@ if __name__ == "__main__":
     MIN_CONTEXT_MATCH = 0.3  # Min chunk-overlap ratio with source documents
     MIN_CONTEXT_LENGTH = 30  # Passages shorter than this (chars) are rejected
 
+    # -- Quality scoring (LLM-as-judge, scores each accepted Q+A on a 1-5 scale) --
+    QUALITY_SCORING_ENABLED = True   # set False to skip quality scoring
+    QUALITY_MIN_SCORE = 3.5          # reject Q+A pairs below this composite score
+
     # -- Pipeline (hallucination detection and experiment tracking) --
     HALLUCINATION_BM25_THRESHOLD = 3.0  # BM25 floor for hallucination verification
     HALLUCINATION_OVERLAP_THRESHOLD = 0.5  # Overlap ratio to consider sections the same
@@ -408,6 +443,8 @@ if __name__ == "__main__":
         min_keyword_ratio=MIN_KEYWORD_RATIO,
         min_context_match=MIN_CONTEXT_MATCH,
         min_context_length=MIN_CONTEXT_LENGTH,
+        quality_scoring_enabled=QUALITY_SCORING_ENABLED,
+        quality_min_score=QUALITY_MIN_SCORE,
         hallucination_bm25_threshold=HALLUCINATION_BM25_THRESHOLD,
         hallucination_overlap_threshold=HALLUCINATION_OVERLAP_THRESHOLD,
         mlflow_experiment_name=MLFLOW_EXPERIMENT_NAME,
