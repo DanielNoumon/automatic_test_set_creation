@@ -232,9 +232,11 @@ def _multi_hop_within_strategy(
             continue
         passage_a = ea.section.full_text
         passage_b = eb.section.full_text
-        # Truncate each to ~800 chars
-        passage_a = _truncate_passage(passage_a, 800)
-        passage_b = _truncate_passage(passage_b, 800)
+        # Truncate each to ~800 chars (skip for Excel)
+        lim_a = _effective_limit(800, fname)
+        lim_b = _effective_limit(800, fname)
+        passage_a = _truncate_passage(passage_a, lim_a)
+        passage_b = _truncate_passage(passage_b, lim_b)
         combined = f"{passage_a}\n\n---\n\n{passage_b}"
 
         results.append(PassageCandidate(
@@ -258,8 +260,13 @@ def _multi_hop_within_strategy(
                 break
             if tracker.is_used(ea.section) and tracker.is_used(eb.section):
                 continue
-            passage_a = _truncate_passage(ea.section.full_text, 800)
-            passage_b = _truncate_passage(eb.section.full_text, 800)
+            lim = _effective_limit(800, fname)
+            passage_a = _truncate_passage(
+                ea.section.full_text, lim,
+            )
+            passage_b = _truncate_passage(
+                eb.section.full_text, lim,
+            )
             combined = f"{passage_a}\n\n---\n\n{passage_b}"
             results.append(PassageCandidate(
                 passage=combined,
@@ -325,8 +332,14 @@ def _multi_hop_between_strategy(
             break
         if tracker.is_used(ea.section) and tracker.is_used(eb.section):
             continue
-        passage_a = _truncate_passage(ea.section.full_text, 800)
-        passage_b = _truncate_passage(eb.section.full_text, 800)
+        lim_a = _effective_limit(800, fname_a)
+        lim_b = _effective_limit(800, fname_b)
+        passage_a = _truncate_passage(
+            ea.section.full_text, lim_a,
+        )
+        passage_b = _truncate_passage(
+            eb.section.full_text, lim_b,
+        )
         combined = f"{passage_a}\n\n---\n\n{passage_b}"
 
         results.append(PassageCandidate(
@@ -437,8 +450,14 @@ def _temporal_strategy(
             break
         if tracker.is_used(ea.section) and tracker.is_used(eb.section):
             continue
-        passage_a = _truncate_passage(ea.section.full_text, 800)
-        passage_b = _truncate_passage(eb.section.full_text, 800)
+        lim_a = _effective_limit(800, fname_a)
+        lim_b = _effective_limit(800, fname_b)
+        passage_a = _truncate_passage(
+            ea.section.full_text, lim_a,
+        )
+        passage_b = _truncate_passage(
+            eb.section.full_text, lim_b,
+        )
         combined = f"{passage_a}\n\n---\n\n{passage_b}"
 
         results.append(PassageCandidate(
@@ -504,7 +523,8 @@ def _lists_extraction_strategy(
             continue
 
         # Use all_text to capture the complete list with children
-        passage = _truncate_passage(sec.all_text, 1500)
+        lim = _effective_limit(1500, fname)
+        passage = _truncate_passage(sec.all_text, lim)
         results.append(PassageCandidate(
             passage=passage,
             source_documents=[fname],
@@ -525,7 +545,12 @@ def _lists_extraction_strategy(
             sec = ent.section
             if tracker.is_used(sec):
                 continue
-            passage = _truncate_passage(sec.all_text, 1500)
+            lim = _effective_limit(
+                1500, ent.source_filename,
+            )
+            passage = _truncate_passage(
+                sec.all_text, lim,
+            )
             results.append(PassageCandidate(
                 passage=passage,
                 source_documents=[ent.source_filename],
@@ -566,7 +591,12 @@ def _hallucination_test_strategy(
             break
         if sec.word_count() < cfg.min_section_words:
             continue
-        passage = _truncate_passage(sec.full_text, cfg.passage_max_chars // 2)
+        lim = _effective_limit(
+            cfg.passage_max_chars // 2, fname,
+        )
+        passage = _truncate_passage(
+            sec.full_text, lim,
+        )
         results.append(PassageCandidate(
             passage=passage,
             source_documents=[fname],
@@ -662,7 +692,11 @@ def _build_candidates(
         if tracker.is_used(sec):
             continue
 
-        passage = _truncate_passage(sec.full_text, cfg.passage_max_chars)
+        lim = _effective_limit(
+            cfg.passage_max_chars,
+            ent.source_filename,
+        )
+        passage = _truncate_passage(sec.full_text, lim)
         results.append(PassageCandidate(
             passage=passage,
             source_documents=[ent.source_filename],
@@ -679,9 +713,22 @@ def _build_candidates(
     return results
 
 
+def _effective_limit(
+    max_chars: int, filename: str,
+) -> int:
+    """Return 0 (no limit) for Excel files, else max_chars."""
+    if filename.lower().endswith((".xlsx", ".xls")):
+        return 0
+    return max_chars
+
+
 def _truncate_passage(text: str, max_chars: int) -> str:
-    """Truncate text at the last sentence boundary."""
-    if len(text) <= max_chars:
+    """Truncate text at the last sentence boundary.
+
+    If *max_chars* <= 0 truncation is skipped (used for
+    Excel sheets that should be passed in full).
+    """
+    if max_chars <= 0 or len(text) <= max_chars:
         return text
     truncated = text[:max_chars]
     # Find last sentence-ending punctuation
