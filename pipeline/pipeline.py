@@ -15,6 +15,8 @@ from .config import TestSetConfig, QuestionType
 from .parsing.document import Document
 from .parsing.pdf_parser import parse_pdf
 from .parsing.text_parser import parse_text_file
+from .parsing.docx_parser import parse_docx
+from .parsing.excel_parser import parse_excel
 from .indexing.search_index import SearchIndex
 from .indexing.entity_extractor import (
     SectionEntities, extract_entities,
@@ -377,6 +379,16 @@ class Pipeline:
                 elif fpath.suffix.lower() in (".txt", ".md"):
                     documents.append(
                         parse_text_file(str(fpath))
+                    )
+                elif fpath.suffix.lower() == ".docx":
+                    documents.append(
+                        parse_docx(str(fpath))
+                    )
+                elif fpath.suffix.lower() in (
+                    ".xlsx", ".xls",
+                ):
+                    documents.append(
+                        parse_excel(str(fpath))
                     )
                 elif fpath.suffix.lower() == ".json":
                     # JSON documents: load as text
