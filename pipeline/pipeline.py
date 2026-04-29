@@ -373,36 +373,43 @@ class Pipeline:
         for fpath in sorted(path.rglob("*")):
             if not fpath.is_file():
                 continue
+            # Relative path from input dir (e.g. HR/CV/file.docx)
+            rel = str(fpath.relative_to(path)).replace(
+                "\\", "/"
+            )
+            doc = None
             try:
                 if fpath.suffix.lower() == ".pdf":
-                    documents.append(parse_pdf(str(fpath)))
-                elif fpath.suffix.lower() in (".txt", ".md"):
-                    documents.append(
-                        parse_text_file(str(fpath))
-                    )
+                    doc = parse_pdf(str(fpath))
+                elif fpath.suffix.lower() in (
+                    ".txt", ".md",
+                ):
+                    doc = parse_text_file(str(fpath))
                 elif fpath.suffix.lower() == ".docx":
-                    documents.append(
-                        parse_docx(str(fpath))
-                    )
+                    doc = parse_docx(str(fpath))
                 elif fpath.suffix.lower() in (
                     ".xlsx", ".xls",
                 ):
-                    documents.append(
-                        parse_excel(str(fpath))
-                    )
+                    doc = parse_excel(str(fpath))
                 elif fpath.suffix.lower() == ".json":
-                    # JSON documents: load as text
                     text = fpath.read_text(
-                        encoding="utf-8", errors="ignore"
+                        encoding="utf-8",
+                        errors="ignore",
                     )
-                    documents.append(Document(
-                        filename=fpath.name,
+                    doc = Document(
+                        filename=rel,
                         raw_text=text,
                         page_count=1,
                         doc_type="json",
-                    ))
+                    )
             except Exception as e:
                 print(f"  Error loading {fpath}: {e}")
+
+            if doc is not None:
+                # Use relative path as filename for
+                # clearer source_documents references
+                doc.filename = rel
+                documents.append(doc)
 
         return documents
 
@@ -677,7 +684,7 @@ class Pipeline:
         date_str = datetime.now().strftime(
             "%d_%m_%y_T%H_%M"
         )
-        filename = f"v2_{name}_{date_str}.json"
+        filename = f"{name}_{date_str}.json"
 
         corpus_dir = os.path.join(
             self.config.output_path, name
