@@ -159,12 +159,17 @@ class Pipeline:
                         s: doc_metadata.get(s, {})
                         for s in candidate.source_documents
                     }
+                diff = (
+                    qcfg.difficulty
+                    if self.config.difficulty_enabled
+                    else None
+                )
                 q_data = self.qa_gen.generate(
                     passage=candidate.passage,
                     source_documents=candidate.source_documents,
                     chapter=candidate.chapter,
                     question_type=qtype,
-                    difficulty=qcfg.difficulty,
+                    difficulty=diff,
                     doc_metadata=candidate_meta,
                 )
                 metrics["llm_calls"] += 1
@@ -222,7 +227,7 @@ class Pipeline:
                         answer=q_data["answer"],
                         passage=candidate.passage,
                         question_type=qtype,
-                        difficulty=qcfg.difficulty,
+                        difficulty=diff,
                     )
                     metrics["llm_calls"] += (
                         1 if self.config.quality.enabled
@@ -257,7 +262,7 @@ class Pipeline:
                     "source_documents": (
                         candidate.source_documents
                     ),
-                    "difficulty": qcfg.difficulty,
+                    "difficulty": diff,
                     "generation_prompt": instruction,
                     "hallucination_detected": False,
                     "context_repaired": False,
@@ -605,7 +610,7 @@ class Pipeline:
 
         # Difficulty distribution
         diff_counter = Counter(
-            q.get("difficulty", "unknown")
+            q.get("difficulty") or "N/A"
             for q in questions
         )
 

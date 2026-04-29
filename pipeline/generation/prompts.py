@@ -304,7 +304,7 @@ def build_qa_prompt(
     source_documents: list,
     chapter: str,
     question_type: QuestionType,
-    difficulty: str,
+    difficulty: str = None,
     doc_metadata: dict = None,
 ) -> list:
     """Build the messages for Q+A generation from a passage."""
@@ -358,7 +358,7 @@ PASSAGE (from chapter: {chapter}):
 SOURCE DOCUMENTS: {', '.join(source_documents)}
 CHAPTER / SECTION: {chapter}{meta_block}
 QUESTION TYPE: {type_hint}
-DIFFICULTY: {difficulty}
+{"DIFFICULTY: " + difficulty if difficulty else ""}
 
 RULES:
 - The question must be answerable ENTIRELY from the passage \

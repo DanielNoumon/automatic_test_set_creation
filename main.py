@@ -61,6 +61,7 @@ def build_config(
     output_path: str = None,
     question_types: dict = None,
     random_seed: int = 42,
+    difficulty_enabled: bool = False,
     # Selection
     min_section_words: int = 15,
     passage_max_chars: int = 1200,
@@ -120,6 +121,7 @@ def build_config(
             hallucination_overlap_threshold=hallucination_overlap_threshold,
             mlflow_experiment_name=mlflow_experiment_name,
         ),
+        difficulty_enabled=difficulty_enabled,
         random_seed=random_seed,
     )
 
@@ -369,10 +371,13 @@ if __name__ == "__main__":
     MLFLOW_EXPERIMENT_NAME = "test-set-creation"  # MLflow experiment name
     RANDOM_SEED = 42  # Fixed seed for reproducible selection; change for new samples
 
+    # -- Difficulty (future feature, disabled for now) --
+    DIFFICULTY_ENABLED = False  # Set True to enable difficulty hints in prompts
+
     # -- Question types to generate --
     # Set enabled=False or remove a type to disable it.
     # If set, overrides count for ALL enabled types (e.g. 1 for quick test)
-    COUNT_OVERRIDE = 1  # Set to None to use per-type counts
+    COUNT_OVERRIDE = 3  # Set to None to use per-type counts
 
     QUESTION_TYPES = {
         QuestionType.DIRECT_LOOKUP: QuestionConfig(
@@ -457,6 +462,7 @@ if __name__ == "__main__":
         output_path=OUTPUT_PATH,
         question_types=QUESTION_TYPES,
         random_seed=RANDOM_SEED,
+        difficulty_enabled=DIFFICULTY_ENABLED,
         min_section_words=MIN_SECTION_WORDS,
         passage_max_chars=PASSAGE_MAX_CHARS,
         long_context_max_chars=LONG_CONTEXT_MAX_CHARS,
