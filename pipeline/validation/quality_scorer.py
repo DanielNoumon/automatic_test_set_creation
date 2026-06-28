@@ -222,9 +222,7 @@ class QualityScorer:
                 "quality_reason": f"scoring error: {e}",
             }
 
-        scores = _try_parse_scores(
-            response, self.config.dimensions,
-        )
+        scores = _try_parse_scores(response, dims)
 
         if not scores:
             print(
