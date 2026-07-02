@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import time
 from collections import Counter
 from datetime import datetime
@@ -20,7 +19,7 @@ from typing import Dict, List, Optional
 from pipeline.config import QuestionType
 from . import generation as gen_mod
 from .config import V3Config
-from .corpus import Corpus, CAT_CV, CAT_PROJECTS
+from .corpus import Corpus
 from .grounding import locate_spans, is_grounded
 from .llm import LLM
 from .prompts import (
@@ -29,8 +28,10 @@ from .prompts import (
 from .schema import (
     IntentCluster, Persona, Tier, QuestionRecord, SupportingSpan, Verification,
 )
-from .selfcontained import run_gate
-from .verification import deterministic_capability, solver_check, VerifyResult
+from .selfcontained import run_gate, run_objectivity_gate
+from .verification import (
+    deterministic_capability, solver_check, VerifyResult, to_text,
+)
 
 
 _PERSONAS = {
@@ -51,6 +52,9 @@ class V3Pipeline:
         self.solver = LLM(cfg.solver, "solver")
         self.judge = LLM(cfg.judge, "judge")
         self._uid = 0
+        # Dedup guards (avoid near-duplicate questions across the run)
+        self._seen_keys: set = set()   # normalized key_terms / subjects
+        self._seen_q: set = set()      # normalized question prefixes
 
     # ── public ──────────────────────────────────────────
     def run(self) -> str:
@@ -58,7 +62,7 @@ class V3Pipeline:
         print("v3 Test Set Creator\n" + "=" * 50)
         corpus = Corpus.load(
             self.cfg.input_documents_path, self.cfg.cv_subset_size,
-            self.cfg.random_seed,
+            self.cfg.random_seed, self.cfg.cv_subset_override,
         )
         print(f"Loaded {len(corpus.docs)} documents "
               f"(CV subset: {len(corpus.cv_subset)})")
@@ -68,7 +72,7 @@ class V3Pipeline:
 
         # ── Content (80) ────────────────────────────────
         content_counts = self.cfg.content_counts()
-        print(f"\nContent plan: "
+        print("\nContent plan: "
               + ", ".join(f"{k.value}={v}" for k, v in content_counts.items()))
         for intent, target in content_counts.items():
             recs = self._make_content(corpus, corpus_index, intent, target)
@@ -99,9 +103,12 @@ class V3Pipeline:
             raw = gen_mod.stage1_doc_questions(
                 self.gen, corpus, intent=intent, personas=personas, n=oversample)
         else:
+            # Steer away from topics already covered (avoids dedup starvation
+            # where capability + reference both cluster on the same key_terms).
             raw = gen_mod.stage2_corpus_questions(
                 self.gen, corpus, corpus_index, intent=intent,
-                personas=personas, n=oversample)
+                personas=personas, n=oversample,
+                avoid_terms=sorted(self._seen_keys))
 
         out: List[QuestionRecord] = []
         for q in raw:
@@ -120,19 +127,40 @@ class V3Pipeline:
             return None
         subject = q.get("intended_subject", "")
         scope = q.get("intended_scope", "")
+        snip = question[:70]
+
+        # Dedup: skip near-duplicate key_terms/subjects and questions.
+        dedup_key = (q.get("key_term") or subject or "").strip().lower()
+        q_key = question[:45].lower()
+        if dedup_key and dedup_key in self._seen_keys:
+            print(f"      REJECT dup [{intent.value}] (key='{dedup_key}'): {snip}")
+            return None
+        if q_key in self._seen_q:
+            print(f"      REJECT dup [{intent.value}] (question): {snip}")
+            return None
 
         # Stage 4 — self-containedness gate
         gate = run_gate(
             self.judge, question=question, intended_subject=subject,
             intended_scope=scope, max_repair_attempts=self.cfg.max_repair_attempts)
         if not gate.passed:
+            print(f"      REJECT gate [{intent.value}] ({gate.reason}): {snip}")
             return None
         question = gate.question
 
         stage = q.get("_stage", 1)
         key_term = q.get("key_term", "")
-        proposed = q.get("golden_answer") or q.get("proposed_answer") or ""
+        proposed = to_text(q.get("golden_answer") or q.get("proposed_answer") or "")
         src = q.get("source_documents", [])
+
+        # Objectivity gate — must be a gradeable eval question (no opinions /
+        # "who is best" / interpretive framings). Runs before the costly solver.
+        obj_ok, obj_reason = run_objectivity_gate(
+            self.judge, question=question, answer=proposed)
+        if not obj_ok:
+            print(f"      REJECT objectivity [{intent.value}] "
+                  f"({obj_reason}): {snip}")
+            return None
 
         # Grounding (provenance located after generation)
         if stage == 2 and key_term:
@@ -148,16 +176,27 @@ class V3Pipeline:
                 supporting_quote=q.get("supporting_quote", ""), key_term=key_term)
 
         if not is_grounded(spans):
+            print(f"      REJECT grounding [{intent.value}] "
+                  f"(key_term='{key_term}', no spans): {snip}")
             return None
 
-        # Stage 3 — solver verification (independent answerer)
+        # Stage 3 — solver verification (independent answerer).
+        # Cross-corpus (stage 2) aggregation over the project table needs the
+        # FULL table as evidence — truncating gives incomplete/wrong gold answers.
         excel = corpus.excel_doc()
-        extra = (excel.full_text[:6000] if (excel and stage == 2) else "")
+        extra = (excel.full_text[:60000] if (excel and stage == 2) else "")
         vr: VerifyResult = solver_check(
             self.solver, corpus, question=question, proposed_answer=proposed,
             spans=spans, extra_evidence=extra)
         if not vr.ok or not vr.golden_answer.strip():
+            print(f"      REJECT solver [{intent.value}] "
+                  f"(ok={vr.ok}, {vr.verification.notes}): {snip}")
             return None
+
+        # Accepted → register dedup keys so later duplicates are skipped.
+        if dedup_key:
+            self._seen_keys.add(dedup_key)
+        self._seen_q.add(q_key)
 
         tier = self._tier_for(q, stage)
         src_docs = sorted({s.document for s in vr.spans}) or src
@@ -257,8 +296,8 @@ class V3Pipeline:
         self, corpus: Corpus, q: Dict, qtype: QuestionType,
         question_key: str = "question", answer_key: str = "golden_answer",
     ) -> Optional[QuestionRecord]:
-        question = (q.get(question_key) or "").strip()
-        answer = (q.get(answer_key) or "").strip()
+        question = to_text(q.get(question_key))
+        answer = to_text(q.get(answer_key))
         if not question or not answer:
             return None
         gate = run_gate(self.judge, question=question,
@@ -374,7 +413,11 @@ class V3Pipeline:
         by_persona = Counter(r.persona for r in records)
         by_intent = Counter(r.intent_cluster for r in records)
         grounded = sum(1 for r in records if r.supporting_spans)
-        reproduced = sum(1 for r in records
+        by_method = Counter(r.verification.method for r in records)
+        # Only count solver_reproduced over questions where the solver ran.
+        solver_ran = [r for r in records
+                      if r.verification.solver_reproduced is not None]
+        reproduced = sum(1 for r in solver_ran
                          if r.verification.solver_reproduced is True)
         multi_src = sum(1 for r in records if len(r.source_documents) > 1)
         t1 = by_tier.get(Tier.T1.value, 0)
@@ -385,8 +428,12 @@ class V3Pipeline:
             "by_type": dict(by_type),
             "by_persona": dict(by_persona),
             "by_intent": dict(by_intent),
+            "verification_by_method": dict(by_method),
             "grounded_ratio": round(grounded / max(1, len(records)), 3),
-            "solver_reproduced_ratio": round(reproduced / max(1, len(records)), 3),
+            "solver_ran": len(solver_ran),
+            "solver_reproduced": reproduced,
+            "solver_reproduced_ratio": round(
+                reproduced / max(1, len(solver_ran)), 3),
             "multi_source_questions": multi_src,
             "tier_floors": {
                 "t1": {"actual": t1, "floor": self.cfg.tier_floor_t1,

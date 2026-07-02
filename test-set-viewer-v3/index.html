@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Set Viewer — v3</title>
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Test Set Viewer <span class="v3-tag">v3</span></h1>
+      <p class="subtitle">Locality-tier &amp; persona/intent test set — with verification audit trail</p>
+    </div>
+    <div id="file-upload">
+      <label for="json-input">Load v3 test set JSON:</label>
+      <input type="file" id="json-input" accept=".json">
+    </div>
+  </header>
+
+  <button id="flow-toggle">
+    <span class="chevron">▸</span> How this test set is built
+  </button>
+  <section id="flow-panel" class="hidden"></section>
+
+  <section id="metadata-panel" class="hidden"></section>
+
+  <button id="summary-toggle" class="hidden">
+    <span class="chevron">▾</span> High-Level Summary
+  </button>
+  <section id="summary-panel" class="hidden"></section>
+
+  <section id="controls" class="hidden">
+    <div id="filter-bar">
+      <label for="tier-filter">Tier:</label>
+      <select id="tier-filter"><option value="all">All tiers</option></select>
+
+      <label for="intent-filter">Intent:</label>
+      <select id="intent-filter"><option value="all">All intents</option></select>
+
+      <label for="persona-filter">Persona:</label>
+      <select id="persona-filter"><option value="all">All personas</option></select>
+
+      <label for="type-filter">Type:</label>
+      <select id="type-filter"><option value="all">All types</option></select>
+
+      <label for="verif-filter">Verification:</label>
+      <select id="verif-filter">
+        <option value="all">All</option>
+        <option value="reproduced">Solver reproduced</option>
+        <option value="diverged">Solver diverged</option>
+        <option value="deterministic">Deterministic</option>
+        <option value="ungrounded">Ungrounded</option>
+      </select>
+
+      <label for="search-input">Search:</label>
+      <input type="text" id="search-input" placeholder="Search questions / answers...">
+    </div>
+    <p id="result-count"></p>
+  </section>
+
+  <main id="table-container" class="hidden">
+    <div class="table-scroll">
+      <table id="questions-table">
+        <thead>
+          <tr>
+            <th class="col-id">#</th>
+            <th class="col-tier">Tier</th>
+            <th class="col-type">Type</th>
+            <th class="col-persona">Persona / Intent</th>
+            <th class="col-question">Question (Dutch)</th>
+            <th class="col-answer">Golden Answer</th>
+            <th class="col-verif">Verification</th>
+            <th class="col-spans">Supporting Spans</th>
+          </tr>
+        </thead>
+        <tbody id="questions-tbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <div id="empty-state">
+    <h2>No test set loaded</h2>
+    <p>Use the file picker above to load a v3 test set JSON file
+       (e.g. <code>data/test_sets/DSL_corpus_v3/…json</code>).</p>
+  </div>
+
+  <!-- Modal for expanding detail -->
+  <div id="modal-overlay" class="hidden">
+    <div id="modal">
+      <div id="modal-header">
+        <h3 id="modal-title"></h3>
+        <button id="modal-close">&times;</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="flow.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

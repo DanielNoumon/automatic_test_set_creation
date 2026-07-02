@@ -14,7 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .llm import LLM
-from .prompts import build_isolation_judge_prompt, build_repair_prompt
+from .prompts import (
+    build_isolation_judge_prompt, build_repair_prompt,
+    build_objectivity_judge_prompt,
+)
 
 
 @dataclass
@@ -53,3 +56,17 @@ def run_gate(
         q = fix["question"].strip()
         repaired = True
     return GateResult(False, q, repaired, "exhausted repairs")
+
+
+def run_objectivity_gate(judge: LLM, *, question: str, answer: str):
+    """Reject opinion/subjective questions that can't be graded objectively.
+
+    Returns (passed: bool, reason: str). Fails closed if the judge doesn't
+    respond (better to drop a question than ship an ungradeable one)."""
+    verdict = judge.json(build_objectivity_judge_prompt(
+        question=question, answer=answer))
+    if verdict is None:
+        return False, "objectivity judge no response"
+    if verdict.get("objective") is True:
+        return True, "ok"
+    return False, verdict.get("reason", "not objectively answerable")

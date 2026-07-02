@@ -276,9 +276,15 @@ real-world sloppy queries.
 ---
 
 ## 6. Corpus curation
-- **CV subset for T1/T2:** sample ~6–8 representative CVs (vary role/seniority/format:
-  include some `.pdf` and some `.docx`).
-- **All 24 CVs for T3/T4:** breadth is the point for aggregation/counting.
+- **CV subset (~7):** the pool of source CVs used to **seed the behavioral
+  ambiguous / multi-turn questions** (Stage 5). It is *not* used for content
+  generation. Configurable via `cv_subset_override`.
+- **All CVs for T3/T4:** breadth is the point for aggregation/counting — the
+  corpus index and verification search use every CV.
+- Note: v3 deliberately generates **no single-doc (T1/T2) questions from
+  individual CVs** — those "what tools does person X list?" lookups are the
+  trivially-retrievable kind the redesign moved away from. T1/T2 come from
+  policy/process docs; CV value lives in T3/T4 aggregation.
 - Ensure non-CV coverage: Handboek (rich for T2 policy synthesis), Rolomschrijvingen
   (roles → T2/T4 counting), projectflow (sequence/process → T2/T3), Excel (numeric
   aggregation → T3/T4 with deterministic verification).

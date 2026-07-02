@@ -16,7 +16,7 @@ import re
 from typing import Dict, List
 
 from pipeline.config import QuestionType
-from .corpus import Corpus, CorpusDoc, CAT_POLICY, CAT_PROCESS, CAT_CV, CAT_PROJECTS
+from .corpus import Corpus, CAT_POLICY, CAT_PROCESS, CAT_PROJECTS
 from .llm import LLM
 from .prompts import (
     build_doc_generation_prompt, build_corpus_generation_prompt,
@@ -25,8 +25,11 @@ from .prompts import (
 )
 from .schema import IntentCluster, Persona
 
-# Whole-document char cap (keeps within context while still "whole doc").
-_DOC_CHAR_CAP = 80_000
+# Whole-document char cap — a safety guard against a pathologically large file,
+# NOT a model limit (gpt-5.4's context is far larger). On the DSL corpus the
+# biggest document is ~69k chars, so this never truncates in practice; the
+# headroom only matters if a much larger document is added later.
+_DOC_CHAR_CAP = 400_000
 _INDEX_DOC_CHARS = 220
 
 
@@ -96,7 +99,7 @@ def build_corpus_index(corpus: Corpus) -> str:
 
 def stage2_corpus_questions(
     gen: LLM, corpus: Corpus, corpus_index: str, *, intent: IntentCluster,
-    personas: List[Persona], n: int,
+    personas: List[Persona], n: int, avoid_terms: List[str] = None,
 ) -> List[Dict]:
     out: List[Dict] = []
     buckets = _spread(n, len(personas)) if personas else []
@@ -105,6 +108,7 @@ def stage2_corpus_questions(
             continue
         res = gen.json(build_corpus_generation_prompt(
             corpus_index=corpus_index, persona=persona, intent=intent, n=k,
+            avoid_terms=avoid_terms,
         ))
         for q in (res or {}).get("questions", []) if res else []:
             q = dict(q)

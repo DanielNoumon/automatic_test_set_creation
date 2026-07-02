@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from pipeline.config import QuestionType
@@ -59,10 +59,10 @@ class V3Config:
     # ── Language (global rule) ──────────────────────────
     language: str = "nl"   # all questions/answers/variants in Dutch
 
-    # ── Distribution (§9) ───────────────────────────────
+    # ── Distribution ────────────────────────────────────
     total_questions: int = 100
-    # Content vs behavioral split (behavioral is INSIDE the total)
-    behavioral_total: int = 20      # → content_total = total - behavioral_total
+    # Content vs behavioral split (behavioral is INSIDE the total): 90% / 10%.
+    behavioral_total: int = 10      # → content_total = total - behavioral_total
 
     # Intent weights applied to the CONTENT questions (must sum to 1.0)
     intent_weights: Dict[IntentCluster, float] = field(default_factory=lambda: {
@@ -74,11 +74,11 @@ class V3Config:
 
     # Behavioral quota (must sum to behavioral_total)
     behavioral_quota: Dict[QuestionType, int] = field(default_factory=lambda: {
-        QuestionType.HALLUCINATION_TEST: 6,
-        QuestionType.ADVERSARIAL_AGGRO: 4,
-        QuestionType.PROMPT_INJECTION: 4,
-        QuestionType.AMBIGUOUS_QUESTIONS: 3,
-        QuestionType.MULTI_TURN_FOLLOWUP: 3,
+        QuestionType.HALLUCINATION_TEST: 3,
+        QuestionType.ADVERSARIAL_AGGRO: 2,
+        QuestionType.PROMPT_INJECTION: 2,
+        QuestionType.AMBIGUOUS_QUESTIONS: 2,
+        QuestionType.MULTI_TURN_FOLLOWUP: 1,
     })
 
     # Tier floors (verified after generation; warn/nudge if unmet)
@@ -86,12 +86,28 @@ class V3Config:
     tier_floor_t3_t4: int = 40
 
     # ── Corpus curation ─────────────────────────────────
-    cv_subset_size: int = 7         # CVs used for single-doc (T1/T2) generation
-    # (all CVs are used for cross-corpus T3/T4 regardless)
+    # The CV subset is the pool of source CVs used to SEED the behavioral
+    # ambiguous / multi-turn questions (Stage 5). It is NOT used for content
+    # generation: T1/T2 come from policy/process docs, and T3/T4 aggregation
+    # uses ALL CVs via the corpus index + verification search.
+    cv_subset_size: int = 7
+    # Optional explicit subset (basenames or relative paths). If set, these CVs
+    # are used instead of the deterministic auto-pick; unmatched slots are
+    # backfilled by the auto-picker.
+    cv_subset_override: Optional[List[str]] = field(default_factory=lambda: [
+        "CV DSL Esmee Valk oktober 2025.docx",
+        "CV Floor Deben DSL 2025.pdf",
+        "CV_Linda_NL.pdf",
+        "DSL CV Younes Seghrouchni 12-11-2024 ENGELS.docx",
+        "Julian CV.docx",
+        # replaced Sebastiaan Peek + mvdleijgraaf (Marine) with these two:
+        "CV Koen DSL 2026.docx",
+        "CV Carmen Wolvius 022026.docx",
+    ])
 
     # ── Generation knobs ────────────────────────────────
-    # Over-generate then filter through gates; yield is < 1.
-    oversample_factor: float = 1.6
+    # Over-generate then filter through gates/dedup; yield is < 1.
+    oversample_factor: float = 2.0
     max_repair_attempts: int = 1
     underspecified_variants: bool = True   # Option 1: graded robustness sub-benchmark
 
@@ -133,29 +149,34 @@ class V3Config:
     def from_env(cls, **overrides) -> "V3Config":
         """Build a config wired to Azure deployments from the environment.
 
-        Generator + judge default to the GPT-5-mini deployment already in .env.
-        Solver defaults to a GPT 5.4 deployment (add DEPLOYMENT_NAME_SOLVER /
-        AZURE_OPENAI_ENDPOINT_SOLVER / API_VERSION_SOLVER to .env).
+        All three roles (generator, judge, solver) use the GPT 5.4 deployment
+        (DEPLOYMENT_NAME_SOLVER / AZURE_OPENAI_ENDPOINT_SOLVER / API_VERSION_SOLVER).
+        Note: gen and solver being the same model weakens the independence of the
+        `solver_reproduced` check, but GPT 5.4 gives the strongest verification.
         """
-        gen = ModelConfig.from_env(
-            "DEPLOYMENT_NAME_GPT5_MINI",
-            "AZURE_OPENAI_ENDPOINT_GPT5_MINI",
-            "API_VERSION_GPT5_MINI",
-            default_model="gpt-5-mini",
-        )
-        # Independent solver — GPT 5.4. Falls back to the GPT-5-mini endpoint/key
-        # if no dedicated solver deployment is configured yet.
-        solver = ModelConfig.from_env(
+        gpt54 = ModelConfig.from_env(
             "DEPLOYMENT_NAME_SOLVER",
             "AZURE_OPENAI_ENDPOINT_SOLVER",
             "API_VERSION_SOLVER",
             default_model=os.getenv("DEPLOYMENT_NAME_SOLVER", "gpt-5.4"),
         )
-        if solver.azure_endpoint is None:
-            # no dedicated solver deployment → reuse generator endpoint/key
-            solver.azure_endpoint = gen.azure_endpoint
-            solver.azure_api_version = gen.azure_api_version
-        cfg = cls(generator=gen, judge=gen, solver=solver)
+        if gpt54.azure_endpoint is None:
+            # fall back to the GPT-5-mini endpoint/key if no solver endpoint set
+            mini = ModelConfig.from_env(
+                "DEPLOYMENT_NAME_GPT5_MINI",
+                "AZURE_OPENAI_ENDPOINT_GPT5_MINI",
+                "API_VERSION_GPT5_MINI",
+                default_model="gpt-5-mini",
+            )
+            gpt54.azure_endpoint = mini.azure_endpoint
+            gpt54.azure_api_version = mini.azure_api_version
+        # Separate instances per role (so call counts stay distinct), same model.
+        import copy
+        cfg = cls(
+            generator=copy.copy(gpt54),
+            judge=copy.copy(gpt54),
+            solver=copy.copy(gpt54),
+        )
         for k, v in overrides.items():
             setattr(cfg, k, v)
         cfg.validate()

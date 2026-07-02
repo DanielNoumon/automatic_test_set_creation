@@ -27,21 +27,19 @@ if os.getenv("AZURE_OPENAI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = os.environ["AZURE_OPENAI_API_KEY"]
 
 
-# Small preset to validate prompt/output quality cheaply before the full 100.
-# Content = 8 (capability 4 / reference 2 / policy 1 / process 1),
-# behavioral = 5 (1 each). Total = 13.
+# Verification set: 30 questions at the 90/10 content:behavioral split.
+# Content = 27 (capability 14 / reference 5 / policy 5 / process 3),
+# behavioral = 3 (hallucination / injection / multi-turn). Total = 30.
 _VALIDATE_OVERRIDES = dict(
-    corpus_name="DSL_corpus_v3_validate",
-    total_questions=13,
-    behavioral_total=5,
+    corpus_name="DSL_corpus_v3_verify",
+    total_questions=30,
+    behavioral_total=3,
     behavioral_quota={
         QuestionType.HALLUCINATION_TEST: 1,
-        QuestionType.ADVERSARIAL_AGGRO: 1,
         QuestionType.PROMPT_INJECTION: 1,
-        QuestionType.AMBIGUOUS_QUESTIONS: 1,
         QuestionType.MULTI_TURN_FOLLOWUP: 1,
     },
-    oversample_factor=1.5,
+    oversample_factor=1.8,
 )
 
 

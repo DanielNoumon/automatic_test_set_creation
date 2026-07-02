@@ -97,7 +97,8 @@ class Corpus:
 
     # ── Loading ─────────────────────────────────────────
     @classmethod
-    def load(cls, input_path: str, cv_subset_size: int, seed: int = 42) -> "Corpus":
+    def load(cls, input_path: str, cv_subset_size: int, seed: int = 42,
+             cv_subset_override: Optional[List[str]] = None) -> "Corpus":
         root = Path(input_path)
         if not root.exists():
             raise FileNotFoundError(f"Input path not found: {root}")
@@ -127,22 +128,48 @@ class Corpus:
                 category=_classify(rel), sections=refs,
             ))
 
-        cv_subset = cls._pick_cv_subset(docs, cv_subset_size, seed)
+        cv_subset = cls._pick_cv_subset(
+            docs, cv_subset_size, seed, cv_subset_override)
         return cls(docs, cv_subset)
 
     @staticmethod
-    def _pick_cv_subset(docs: List[CorpusDoc], n: int, seed: int) -> List[str]:
-        """Pick a representative CV subset, preferring format variety
-        (include some PDFs alongside DOCX)."""
+    def _pick_cv_subset(docs: List[CorpusDoc], n: int, seed: int,
+                        override: Optional[List[str]] = None) -> List[str]:
+        """Pick the CV subset. If `override` is given, use those CVs (matched by
+        basename/relative path); backfill any shortfall with the auto-picker.
+        Otherwise pick a representative set, preferring format variety."""
         cvs = [d.filename for d in docs if d.category == CAT_CV]
-        if len(cvs) <= n:
+        if len(cvs) <= n and not override:
             return cvs
+
+        if override:
+            chosen = [
+                c for c in cvs
+                if any(c == o or c.endswith("/" + o) or c.endswith(o)
+                       for o in override)
+            ]
+            unmatched = [o for o in override
+                         if not any(c == o or c.endswith(o) for c in cvs)]
+            for o in unmatched:
+                print(f"  [corpus] cv_subset_override entry not found: {o}")
+            if len(chosen) >= n:
+                return sorted(chosen)[:n]
+            # backfill remaining slots from the auto-pick, skipping already chosen
+            remaining = [c for c in cvs if c not in chosen]
+            fill = Corpus._auto_pick(remaining, n - len(chosen), seed)
+            return sorted(chosen + fill)
+
+        return Corpus._auto_pick(cvs, n, seed)
+
+    @staticmethod
+    def _auto_pick(cvs: List[str], n: int, seed: int) -> List[str]:
+        if len(cvs) <= n:
+            return sorted(cvs)
         rng = random.Random(seed)
         pdfs = [c for c in cvs if c.lower().endswith(".pdf")]
         docx = [c for c in cvs if c.lower().endswith(".docx")]
         rng.shuffle(pdfs)
         rng.shuffle(docx)
-        # Aim for ~1/3 PDFs if available
         n_pdf = min(len(pdfs), max(1, n // 3)) if pdfs else 0
         chosen = pdfs[:n_pdf] + docx[: n - n_pdf]
         return sorted(chosen)[:n]

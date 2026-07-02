@@ -58,9 +58,17 @@ class SupportingSpan:
 
 @dataclass
 class Verification:
-    method: str = "solver_agent"       # deterministic | solver_agent | corpus_search
-    solver_reproduced: Optional[bool] = None
+    """Auditable record of how a question's gold answer was verified.
+
+    method: deterministic | solver_agent | corpus_search | generator | grafted
+    """
+    method: str = "solver_agent"
+    solver_reproduced: Optional[bool] = None   # solver agreed with proposed?
     notes: str = ""
+    proposed_answer: str = ""      # generator's original answer (pre-verification)
+    solver_answer: str = ""        # independent solver's raw answer
+    evidence_docs: int = 0         # #distinct docs of evidence the solver saw
+    deterministic_matches: Optional[List[str]] = None  # docs matched by key_term
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

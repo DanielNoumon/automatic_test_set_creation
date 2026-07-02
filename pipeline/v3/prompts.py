@@ -60,11 +60,27 @@ _PERSONA_DESC = {
     Persona.ALL_STAFF: "een willekeurige medewerker",
 }
 
+# Objectivity rule — every content question must be a gradeable eval item.
+_OBJECTIVITY_RULE = (
+    "OBJECTIVITEIT (VERPLICHT): elke vraag moet ÉÉN bepaald, objectief "
+    "verifieerbaar antwoord hebben dat rechtstreeks uit de documenten volgt "
+    "(een feit, een aantal, een verzameling of een opsomming). Stel GEEN "
+    "meningsvragen of oordeelsvragen. VERBODEN formuleringen: 'wie is/lijkt "
+    "het best', 'meest geschikt', 'meest passend', 'hoe sterk', 'zou je "
+    "aanraden', 'welke is beter', 'het beste'. VERBODEN interpretatieve "
+    "staartjes zoals 'gaat het vooral om X, Y of Z?' of 'zien we dat vooral "
+    "als ...'. Bemensings-/inzetbaarheidsvragen MOETEN feitelijk zijn: "
+    "'welke medewerkers hebben aantoonbare ervaring met X?' (een verzameling "
+    "namen), NIET 'wie is het best inzetbaar?'."
+)
+
+
 _INTENT_DESC = {
     IntentCluster.CAPABILITY: (
-        "wil ontdekken of het bedrijf ervaring heeft met een bepaald "
-        "projecttype, branche of techniek — en hoeveel/wat voor ervaring "
-        "(capability discovery / diepgang / bemensing)"
+        "wil objectief vaststellen of en in welke mate het bedrijf ervaring "
+        "heeft met een bepaald projecttype, branche of techniek: bij welke "
+        "klanten, hoeveel projecten, en welke medewerkers aantoonbare ervaring "
+        "hebben — feitelijke opsommingen, GEEN oordeel over wie 'het best' is"
     ),
     IntentCluster.REFERENCE: (
         "zoekt concrete referenties of bewijs: welke klantprojecten, wat is er "
@@ -105,6 +121,7 @@ EISEN:
   * T2 = antwoord vereist het combineren van >=3 verspreide plekken in het document
     of het lezen van (een groot deel van) het hele document.
 - {_SELF_CONTAINED_RULE}
+- {_OBJECTIVITY_RULE}
 - {_DUTCH_RULE}
 - Geef bij elke vraag een KORT, correct gouden antwoord (1-3 zinnen) dat alleen
   feiten uit het document bevat.
@@ -135,11 +152,19 @@ Antwoord met UITSLUITEND JSON (geen extra tekst):
 
 def build_corpus_generation_prompt(
     *, corpus_index: str, persona: Persona, intent: IntentCluster, n: int,
+    avoid_terms: List[str] = None,
 ) -> List[Dict[str, str]]:
     """Generate cross-document aggregation/structural questions from a corpus map.
 
     The model proposes the QUESTION and a searchable `key_term`; the gold answer
     is computed deterministically afterwards (do not trust the model's count)."""
+    avoid_block = ""
+    if avoid_terms:
+        shown = ", ".join(sorted(set(avoid_terms))[:25])
+        avoid_block = (
+            f"\nAL GEDEKTE ONDERWERPEN (VERMIJD deze — kies ANDERE technieken, "
+            f"branches of klanten): {shown}\n"
+        )
     user = f"""Hieronder staat een OVERZICHT van de hele documentcollectie van een
 data-science consultancy (samenvattingen per document + de projectentabel).
 
@@ -147,6 +172,9 @@ Genereer {n} realistische vragen die {_PERSONA_DESC[persona]} zou stellen en die
 {_INTENT_DESC[intent]}. Deze vragen MOETEN informatie uit MEERDERE documenten
 combineren (cross-document aggregatie of corpus-brede telling) — niet
 beantwoordbaar uit één document.
+
+ZORG VOOR VARIATIE: elke vraag gaat over een ANDER onderwerp (een andere
+techniek, branche of klant). Herhaal geen onderwerp.{avoid_block}
 
 CORPUS-OVERZICHT:
 \"\"\"
@@ -157,6 +185,7 @@ EISEN:
 - locality_tier = "T3" (combineer meerdere documenten) of "T4" (corpus-brede
   telling/enumeratie).
 - {_SELF_CONTAINED_RULE}
+- {_OBJECTIVITY_RULE}
 - {_DUTCH_RULE}
 - Geef per vraag een 'key_term': het meest onderscheidende, letterlijk
   doorzoekbare trefwoord (bijv. een techniek 'Databricks', een branche, een
@@ -192,6 +221,11 @@ def build_solver_prompt(*, question: str, evidence: str) -> List[Dict[str, str]]
 onderstaande bewijs uit de bedrijfsdocumenten. Gebruik geen externe kennis.
 Als het antwoord niet in het bewijs staat, zeg dat expliciet.
 
+BELANGRIJK: beantwoord ELK onderdeel van de vraag. Als de vraag meerdere
+deelvragen bevat (wie / wat / wanneer / hoeveel / bij welke klanten), behandel
+ze allemaal. Bij tel- of opsommingsvragen: noem ALLE items uit het bewijs
+volledig, niet slechts een paar voorbeelden.
+
 {_DUTCH_RULE}
 
 VRAAG: {question}
@@ -212,21 +246,40 @@ Antwoord met UITSLUITEND JSON:
 # ── Stage 4 — isolation judge & repair ──────────────────
 
 def build_isolation_judge_prompt(*, question: str) -> List[Dict[str, str]]:
-    """Judge sees ONLY the question (no passage). Tests self-containedness."""
+    """Judge sees ONLY the question (no passage). Tests self-containedness.
+
+    Crucial framing: the chatbot under test HAS access to the company's full
+    document collection (HR-handboek, rolomschrijvingen, projectentabel/
+    projecthistorie, CV's van medewerkers, projectflow-/procesdocumenten). So a
+    question may freely refer to those known corpus resources by name. We only
+    reject references that require seeing one SPECIFIC, niet-benoemde passage die
+    aan de vraagsteller werd getoond."""
     user = f"""Hieronder staat ALLEEN een vraag — je ziet geen brondocument.
 
 VRAAG: {question}
 
-Beoordeel of deze vraag volledig op zichzelf te begrijpen is voor een chatbot die
-niet weet uit welk document de vraag komt. De vraag faalt als hij verwijst naar
-een niet-genoemd document/sectie/rol ('dit document', 'het profiel', 'deze rol',
-'hierboven', etc.) of een onbepaalde verwijzing bevat waarvan het onderwerp
-onduidelijk is.
+BELANGRIJK: de chatbot die deze vraag moet beantwoorden heeft TOEGANG tot de
+volledige bedrijfsdocumentatie: het HR-handboek, de rolomschrijvingen, de
+projectentabel/projecthistorie, de CV's van alle medewerkers, en de
+proces-/projectflow-documenten. Verwijzingen naar zulke BEKENDE bronnen
+('de projectentabel', 'het handboek', 'onze projecten', 'de rolomschrijving van
+de CCO', een met naam genoemde persoon of rol) zijn dus PRIMA — die kan de
+chatbot opzoeken.
+
+De vraag is NIET zelfstandig (self_contained = false) ALLEEN als hij verwijst
+naar één specifieke, niet-benoemde passage/sectie/persoon die alleen te begrijpen
+is als je de brontekst voor je hebt — bijvoorbeeld 'dit document', 'deze rol',
+'het bovenstaande profiel', 'de genoemde tabel', 'hierboven', of een voornaamwoord
+zonder duidelijk onderwerp. Twijfel je en kan een medewerker met toegang tot de
+documentatie de vraag prima begrijpen? Dan is hij zelfstandig (true).
 
 Antwoord met UITSLUITEND JSON:
 {{"self_contained": true/false, "reason": "korte uitleg", "missing_subject": "wat ontbreekt, of leeg"}}"""
     return _msgs(user, system=(
-        "Je bent een strenge taalkundige beoordelaar van zelfstandigheid van vragen."
+        "Je beoordeelt of een vraag zelfstandig te begrijpen is voor een chatbot "
+        "met toegang tot de volledige bedrijfsdocumentatie. Wees niet overdreven "
+        "streng: alleen verwijzingen naar een ongespecificeerde, getoonde passage "
+        "maken een vraag niet-zelfstandig."
     ))
 
 
@@ -248,6 +301,40 @@ OORSPRONKELIJKE VRAAG: {question}
 Antwoord met UITSLUITEND JSON:
 {{"question": "herschreven vraag"}}"""
     return _msgs(user)
+
+
+def build_objectivity_judge_prompt(
+    *, question: str, answer: str,
+) -> List[Dict[str, str]]:
+    """Reject questions that are opinion-based or lack one determinate answer —
+    they can't be used to grade another chatbot."""
+    user = f"""Beoordeel of de volgende vraag GESCHIKT is als evaluatievraag voor
+een test set. Geschikt betekent: er is ÉÉN bepaald, objectief antwoord op te
+geven dat rechtstreeks uit bedrijfsdocumenten volgt (een feit, een aantal, een
+verzameling of een opsomming), zodat het antwoord van een andere chatbot er
+tegen afgezet kan worden.
+
+VRAAG: {question}
+VOORGESTELD ANTWOORD: {answer}
+
+De vraag is NIET geschikt (objective = false) als:
+- hij om een OORDEEL of MENING vraagt ("wie is/lijkt het best", "meest
+  geschikt/passend", "hoe sterk", "zou je aanraden", "welke is beter");
+- het juiste antwoord afhangt van interpretatie of van wie het beoordeelt
+  (bijv. een "gaat het vooral om X of Y?"-inschatting);
+- er geen bepaald, controleerbaar antwoord bestaat (het voorgestelde antwoord
+  hedget, geeft een aanbeveling, of erkent dat er geen objectieve maat is).
+
+Een feitelijke opsomming ("welke klanten/medewerkers hebben ervaring met X",
+"hoeveel projecten", "welke stappen") is WEL geschikt.
+
+Antwoord met UITSLUITEND JSON:
+{{"objective": true/false, "reason": "korte uitleg"}}"""
+    return _msgs(user, system=(
+        "Je bent een strenge beoordelaar van of een vraag objectief en "
+        "verifieerbaar te beantwoorden is uit documenten. Meningsvragen keur "
+        "je af."
+    ))
 
 
 # ── Stage 5 — behavioral types ──────────────────────────

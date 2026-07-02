@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from .corpus import Corpus, CAT_CV, CAT_PROJECTS
-from .grounding import SupportingSpan
+from .grounding import SupportingSpan, snippet_around
 from .llm import LLM
 from .prompts import build_solver_prompt
 from .schema import Verification
@@ -29,6 +29,19 @@ class VerifyResult:
     golden_answer: str
     verification: Verification
     spans: List[SupportingSpan]
+
+
+def to_text(value) -> str:
+    """Coerce an LLM-provided answer (str | list | dict | None) to a string."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        return ", ".join(to_text(v) for v in value if v is not None).strip()
+    if isinstance(value, dict):
+        return ", ".join(f"{k}: {to_text(v)}" for k, v in value.items()).strip()
+    return str(value).strip()
 
 
 # ── deterministic helpers ───────────────────────────────
@@ -44,7 +57,7 @@ def deterministic_capability(
     spans: List[SupportingSpan] = []
     for fname, sec in corpus.search_term(key_term, categories=[CAT_CV, CAT_PROJECTS]):
         if not any(s.document == fname for s in spans):
-            snippet = re.sub(r"\s+", " ", sec.text).strip()[:300]
+            snippet = snippet_around(sec.text, key_term, width=300)
             spans.append(SupportingSpan(fname, sec.page_start, snippet))
     if not hits:
         return VerifyResult(
@@ -55,6 +68,7 @@ def deterministic_capability(
             verification=Verification(
                 method="deterministic", solver_reproduced=None,
                 notes="key_term not found anywhere in corpus",
+                deterministic_matches=[],
             ),
             spans=[],
         )
@@ -67,8 +81,9 @@ def deterministic_capability(
         verification=Verification(
             method="deterministic", solver_reproduced=None,
             notes=f"{len(hits)} docs match key_term",
+            deterministic_matches=list(hits),
         ),
-        spans=spans[:8],
+        spans=spans[:25],
     )
 
 
@@ -92,6 +107,8 @@ def solver_check(
         evidence_parts.append(extra_evidence)
     evidence = "\n\n".join(evidence_parts) if evidence_parts else "(geen bewijs)"
 
+    proposed_answer = to_text(proposed_answer)
+    evidence_docs = len({s.document for s in spans})
     res = solver.json(build_solver_prompt(question=question, evidence=evidence))
     if not res:
         return VerifyResult(
@@ -99,11 +116,13 @@ def solver_check(
             verification=Verification(
                 method="solver_agent", solver_reproduced=False,
                 notes="solver returned no parseable answer",
+                proposed_answer=proposed_answer, solver_answer="",
+                evidence_docs=evidence_docs,
             ),
             spans=spans,
         )
     answerable = bool(res.get("answerable", True))
-    solver_ans = (res.get("answer") or "").strip()
+    solver_ans = to_text(res.get("answer"))
     reproduced = answerable and _answers_agree(proposed_answer, solver_ans)
     # Trust the solver's grounded answer as the gold when it is answerable.
     gold = solver_ans if answerable and solver_ans else proposed_answer
@@ -114,15 +133,17 @@ def solver_check(
             method="solver_agent",
             solver_reproduced=reproduced,
             notes="" if reproduced else "solver answer differs from proposed",
+            proposed_answer=proposed_answer, solver_answer=solver_ans,
+            evidence_docs=evidence_docs,
         ),
         spans=spans,
     )
 
 
-def _answers_agree(a: str, b: str, threshold: float = 0.4) -> bool:
+def _answers_agree(a, b, threshold: float = 0.4) -> bool:
     """Cheap token-overlap agreement check between two answers."""
-    ta = set(re.findall(r"\w+", a.lower()))
-    tb = set(re.findall(r"\w+", b.lower()))
+    ta = set(re.findall(r"\w+", to_text(a).lower()))
+    tb = set(re.findall(r"\w+", to_text(b).lower()))
     if not ta or not tb:
         return False
     inter = len(ta & tb)
