@@ -47,13 +47,27 @@ class AnswerType(str, Enum):
 @dataclass
 class SupportingSpan:
     """A piece of evidence that grounds the answer — provenance, not the
-    unit the question was built from."""
+    unit the question was built from.
+
+    `text` is a windowed snippet centered on the match (for compact display);
+    `full_text` is the complete source section and is what the solver receives
+    as evidence, so answers are never cut off mid-section."""
     document: str
     page: int
     text: str
+    full_text: str = ""
+
+    def evidence(self) -> str:
+        """Full section text for the solver (falls back to the snippet)."""
+        return self.full_text or self.text
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"document": self.document, "page": self.page, "text": self.text}
+        return {
+            "document": self.document,
+            "page": self.page,
+            "text": self.text,
+            "full_text": self.full_text or self.text,
+        }
 
 
 @dataclass

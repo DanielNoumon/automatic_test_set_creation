@@ -375,7 +375,7 @@ function spansDetailHtml(q) {
     .map(
       (s) => `<div class="span-item">
         <div class="span-head">${escapeHtml(s.document)} · page ${s.page}</div>
-        <div>${escapeHtml(s.text || "")}</div></div>`
+        <div>${escapeHtml(s.full_text || s.text || "")}</div></div>`
     )
     .join("");
 }

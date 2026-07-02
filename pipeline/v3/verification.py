@@ -58,7 +58,8 @@ def deterministic_capability(
     for fname, sec in corpus.search_term(key_term, categories=[CAT_CV, CAT_PROJECTS]):
         if not any(s.document == fname for s in spans):
             snippet = snippet_around(sec.text, key_term, width=300)
-            spans.append(SupportingSpan(fname, sec.page_start, snippet))
+            spans.append(SupportingSpan(
+                fname, sec.page_start, snippet, full_text=sec.text))
     if not hits:
         return VerifyResult(
             ok=True,
@@ -101,8 +102,14 @@ def solver_check(
     solver: LLM, corpus: Corpus, *, question: str, proposed_answer: str,
     spans: List[SupportingSpan], extra_evidence: str = "",
 ) -> VerifyResult:
-    """Independent GPT 5.4 solver reproduces the answer from evidence."""
-    evidence_parts = [f"[{s.document}] {s.text}" for s in spans]
+    """Independent GPT 5.4 solver reproduces the answer from evidence.
+
+    Feeds the FULL source section per span (capped) — never the windowed
+    display snippet — so answers are not cut off mid-section."""
+    _SPAN_CAP = 6000  # per-span char cap to bound total evidence size
+    evidence_parts = [
+        f"[{s.document}] {s.evidence()[:_SPAN_CAP]}" for s in spans
+    ]
     if extra_evidence:
         evidence_parts.append(extra_evidence)
     evidence = "\n\n".join(evidence_parts) if evidence_parts else "(geen bewijs)"

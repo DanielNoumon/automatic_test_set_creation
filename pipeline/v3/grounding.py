@@ -150,7 +150,8 @@ def locate_spans(
         for s in candidates:
             if q in _norm(s.text).lower():
                 spans.append(SupportingSpan(
-                    s.document, s.page_start, _window(s.text, kws, anchors)))
+                    s.document, s.page_start,
+                _window(s.text, kws, anchors), full_text=s.text))
                 used.add((s.document, s.page_start))
                 break
 
@@ -177,14 +178,16 @@ def locate_spans(
             if not keep:
                 continue
             spans.append(SupportingSpan(
-                s.document, s.page_start, _window(s.text, kws, anchors)))
+                s.document, s.page_start,
+                _window(s.text, kws, anchors), full_text=s.text))
             used.add(key)
 
         # Never return zero spans when a plausible best section exists.
         if not spans:
             s = scored[0][0]
             spans.append(SupportingSpan(
-                s.document, s.page_start, _window(s.text, kws, anchors)))
+                s.document, s.page_start,
+                _window(s.text, kws, anchors), full_text=s.text))
 
     return spans[:max_spans]
 

@@ -308,32 +308,72 @@ def build_objectivity_judge_prompt(
 ) -> List[Dict[str, str]]:
     """Reject questions that are opinion-based or lack one determinate answer —
     they can't be used to grade another chatbot."""
-    user = f"""Beoordeel of de volgende vraag GESCHIKT is als evaluatievraag voor
-een test set. Geschikt betekent: er is ÉÉN bepaald, objectief antwoord op te
-geven dat rechtstreeks uit bedrijfsdocumenten volgt (een feit, een aantal, een
-verzameling of een opsomming), zodat het antwoord van een andere chatbot er
-tegen afgezet kan worden.
+    user = f"""Beoordeel of de volgende vraag bruikbaar is als evaluatievraag.
+De maatstaf: zouden twee goed geïnformeerde mensen die de bedrijfsdocumenten
+lezen HETZELFDE antwoord geven? Zo ja, dan is de vraag objectief (objective =
+true).
 
 VRAAG: {question}
 VOORGESTELD ANTWOORD: {answer}
 
-De vraag is NIET geschikt (objective = false) als:
-- hij om een OORDEEL of MENING vraagt ("wie is/lijkt het best", "meest
-  geschikt/passend", "hoe sterk", "zou je aanraden", "welke is beter");
-- het juiste antwoord afhangt van interpretatie of van wie het beoordeelt
-  (bijv. een "gaat het vooral om X of Y?"-inschatting);
-- er geen bepaald, controleerbaar antwoord bestaat (het voorgestelde antwoord
-  hedget, geeft een aanbeveling, of erkent dat er geen objectieve maat is).
+KEUR GOED (objective = true), ook al is het een brede of samengestelde vraag:
+- feitelijke opsommingen/verzamelingen: "bij welke klanten/projecten is X
+  gebruikt", "welke medewerkers hebben ervaring met X", "welke technieken/
+  services komen voor";
+- tellingen: "hoeveel projecten/klanten";
+- procedures/stappen/rollen/beleid uit een document, ook als het document zelf
+  gewone woorden als "normaal" of "zo snel mogelijk" gebruikt — het antwoord is
+  dan gewoon wat er in het document staat;
+- vragen met meerdere deelvragen (wie/wat/wanneer/hoeveel) zijn PRIMA.
+Kleine grensgevallen (wat telt precies als "computer vision") maken een vraag
+NIET subjectief zolang de documenten het antwoord bepalen.
 
-Een feitelijke opsomming ("welke klanten/medewerkers hebben ervaring met X",
-"hoeveel projecten", "welke stappen") is WEL geschikt.
+KEUR AF (objective = false) ALLEEN bij een echt OORDEEL/MENING/AANBEVELING:
+- "wie is/lijkt het best inzetbaar", "meest geschikt/passend", "hoe sterk is
+  onze capability", "zou je aanraden", "welke is beter", een rangschikking of
+  advies waar redelijke mensen van mening kunnen verschillen;
+- het voorgestelde antwoord geeft een aanbeveling/rangschikking of erkent dat
+  er geen objectieve maat is.
+
+Wees niet overdreven streng: twijfel je, en is er een feitelijke kern die uit
+de documenten te halen is? Keur dan GOED.
 
 Antwoord met UITSLUITEND JSON:
 {{"objective": true/false, "reason": "korte uitleg"}}"""
     return _msgs(user, system=(
-        "Je bent een strenge beoordelaar van of een vraag objectief en "
-        "verifieerbaar te beantwoorden is uit documenten. Meningsvragen keur "
-        "je af."
+        "Je bepaalt of een vraag een objectief, uit documenten af te leiden "
+        "antwoord heeft (waar goed geïnformeerde lezers het over eens zijn). "
+        "Alleen echte meningsvragen, aanbevelingen en rangschikkingen keur je "
+        "af; feitelijke opsommingen en tellingen keur je goed."
+    ))
+
+
+def build_dedup_judge_prompt(
+    *, question: str, covered: List[str],
+) -> List[Dict[str, str]]:
+    """Semantic duplicate check: is this question about the same topic as one
+    already in the set, even if worded differently?"""
+    lines = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(covered))
+    user = f"""Bepaal of de NIEUWE vraag inhoudelijk een DUBBELE of BIJNA-DUBBELE
+is van een van de reeds gedekte onderwerpen. Twee vragen zijn duplicaten als ze
+in essentie over hetzelfde onderwerp gaan en (grotendeels) hetzelfde antwoord
+zouden opleveren — OOK als de bewoording verschilt (bijv. 'zorgsector' vs
+'gezondheidszorg', 'computer vision' vs 'beeldherkenning', of een telling vs een
+opsomming van dezelfde set).
+
+GEEN duplicaat als het over een andere techniek, branche, klant, rol of proces
+gaat, of een duidelijk andere invalshoek heeft.
+
+NIEUWE VRAAG: {question}
+
+AL GEDEKTE ONDERWERPEN:
+{lines}
+
+Antwoord met UITSLUITEND JSON:
+{{"duplicate": true/false, "of": "het gedekte onderwerp (of leeg)", "reason": "kort"}}"""
+    return _msgs(user, system=(
+        "Je bewaakt de diversiteit van een testset en herkent inhoudelijke "
+        "duplicaten, ook als ze anders verwoord zijn."
     ))
 
 

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from typing import List
+
 from .llm import LLM
 from .prompts import (
     build_isolation_judge_prompt, build_repair_prompt,
-    build_objectivity_judge_prompt,
+    build_objectivity_judge_prompt, build_dedup_judge_prompt,
 )
 
 
@@ -70,3 +72,21 @@ def run_objectivity_gate(judge: LLM, *, question: str, answer: str):
     if verdict.get("objective") is True:
         return True, "ok"
     return False, verdict.get("reason", "not objectively answerable")
+
+
+def run_dedup_gate(judge: LLM, *, question: str, covered: List[str]):
+    """Semantic duplicate check against already-covered topics.
+
+    Returns (is_duplicate: bool, of: str). Fails OPEN (keeps the question) if
+    the judge doesn't respond — a missed dup is less harmful than dropping a
+    good question over a transient error. With no covered topics, trivially
+    novel."""
+    if not covered:
+        return False, ""
+    verdict = judge.json(build_dedup_judge_prompt(
+        question=question, covered=covered))
+    if verdict is None:
+        return False, ""
+    if verdict.get("duplicate") is True:
+        return True, verdict.get("of", "") or verdict.get("reason", "")
+    return False, ""

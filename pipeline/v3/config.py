@@ -106,8 +106,9 @@ class V3Config:
     ])
 
     # ── Generation knobs ────────────────────────────────
-    # Over-generate then filter through gates/dedup; yield is < 1.
-    oversample_factor: float = 2.0
+    # Over-generate then filter through gates/dedup; yield is < 1 (the
+    # objectivity gate, solver, and topic-dedup all reject candidates).
+    oversample_factor: float = 2.2
     max_repair_attempts: int = 1
     underspecified_variants: bool = True   # Option 1: graded robustness sub-benchmark
 

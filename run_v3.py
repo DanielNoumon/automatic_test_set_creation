@@ -51,10 +51,20 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Final dataset: 50 questions at the 90/10 split (45 content + 5 behavioral).
     overrides = dict(
         input_documents_path=str(_ROOT / "data" / "files_for_test_set"),
         output_path=str(_ROOT / "data" / "test_sets"),
         corpus_name="DSL_corpus_v3",
+        total_questions=50,
+        behavioral_total=5,
+        behavioral_quota={
+            QuestionType.HALLUCINATION_TEST: 1,
+            QuestionType.ADVERSARIAL_AGGRO: 1,
+            QuestionType.PROMPT_INJECTION: 1,
+            QuestionType.AMBIGUOUS_QUESTIONS: 1,
+            QuestionType.MULTI_TURN_FOLLOWUP: 1,
+        },
     )
     if args.validate:
         overrides.update(_VALIDATE_OVERRIDES)

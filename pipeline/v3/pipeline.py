@@ -28,7 +28,7 @@ from .prompts import (
 from .schema import (
     IntentCluster, Persona, Tier, QuestionRecord, SupportingSpan, Verification,
 )
-from .selfcontained import run_gate, run_objectivity_gate
+from .selfcontained import run_gate, run_objectivity_gate, run_dedup_gate
 from .verification import (
     deterministic_capability, solver_check, VerifyResult, to_text,
 )
@@ -53,8 +53,9 @@ class V3Pipeline:
         self.judge = LLM(cfg.judge, "judge")
         self._uid = 0
         # Dedup guards (avoid near-duplicate questions across the run)
-        self._seen_keys: set = set()   # normalized key_terms / subjects
+        self._seen_keys: set = set()   # normalized key_terms / subjects (cheap)
         self._seen_q: set = set()      # normalized question prefixes
+        self._covered_topics: list = []  # topic strings for the LLM dedup gate
 
     # ── public ──────────────────────────────────────────
     def run(self) -> str:
@@ -129,11 +130,16 @@ class V3Pipeline:
         scope = q.get("intended_scope", "")
         snip = question[:70]
 
-        # Dedup: skip near-duplicate key_terms/subjects and questions.
-        dedup_key = (q.get("key_term") or subject or "").strip().lower()
+        # Dedup: skip near-duplicates. Key on BOTH the searchable key_term and
+        # the normalized intended_subject, so semantic dups with different
+        # key_terms (e.g. two "zorgsector" questions) are still caught.
+        kt = (q.get("key_term") or "").strip().lower()
+        subj_key = " ".join(subject.lower().split())
+        dup_keys = [k for k in (kt, subj_key) if k]
         q_key = question[:45].lower()
-        if dedup_key and dedup_key in self._seen_keys:
-            print(f"      REJECT dup [{intent.value}] (key='{dedup_key}'): {snip}")
+        hit = next((k for k in dup_keys if k in self._seen_keys), None)
+        if hit:
+            print(f"      REJECT dup [{intent.value}] (topic='{hit}'): {snip}")
             return None
         if q_key in self._seen_q:
             print(f"      REJECT dup [{intent.value}] (question): {snip}")
@@ -162,6 +168,15 @@ class V3Pipeline:
                   f"({obj_reason}): {snip}")
             return None
 
+        # Semantic dedup gate (LLM) — catches near-duplicate TOPICS that the
+        # cheap string dedup misses (e.g. "zorgsector" vs "gezondheidszorg").
+        is_dup, dup_of = run_dedup_gate(
+            self.judge, question=question, covered=self._covered_topics)
+        if is_dup:
+            print(f"      REJECT dup-llm [{intent.value}] "
+                  f"(~ {dup_of[:50]}): {snip}")
+            return None
+
         # Grounding (provenance located after generation)
         if stage == 2 and key_term:
             det = deterministic_capability(corpus, key_term=key_term)
@@ -181,10 +196,21 @@ class V3Pipeline:
             return None
 
         # Stage 3 — solver verification (independent answerer).
-        # Cross-corpus (stage 2) aggregation over the project table needs the
-        # FULL table as evidence — truncating gives incomplete/wrong gold answers.
+        # The solver must see the SAME complete context the generator used,
+        # otherwise whole-document questions (list all sections, count steps)
+        # get wrong answers from an incomplete span subset.
+        #  - stage 2 (cross-corpus): the full project Excel table.
+        #  - stage 1 (single-doc):   the full source document(s).
         excel = corpus.excel_doc()
-        extra = (excel.full_text[:60000] if (excel and stage == 2) else "")
+        if stage == 2:
+            extra = (excel.full_text[:60000] if excel else "")
+        else:
+            docs_full = []
+            for fn in (src or [sp.document for sp in spans]):
+                cdoc = corpus.by_name.get(fn)
+                if cdoc:
+                    docs_full.append(cdoc.full_text)
+            extra = "\n\n".join(docs_full)[:80000]
         vr: VerifyResult = solver_check(
             self.solver, corpus, question=question, proposed_answer=proposed,
             spans=spans, extra_evidence=extra)
@@ -194,9 +220,10 @@ class V3Pipeline:
             return None
 
         # Accepted → register dedup keys so later duplicates are skipped.
-        if dedup_key:
-            self._seen_keys.add(dedup_key)
+        self._seen_keys.update(dup_keys)
         self._seen_q.add(q_key)
+        self._covered_topics.append(
+            f"{subject}: {question[:70]}" if subject else question[:90])
 
         tier = self._tier_for(q, stage)
         src_docs = sorted({s.document for s in vr.spans}) or src
